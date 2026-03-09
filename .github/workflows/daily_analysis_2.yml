@@ -144,7 +144,7 @@ jobs:
           # ==========================================
           # 自选股配置
           # ==========================================
-          STOCK_LIST: ${{ vars.STOCK_LIST || secrets.STOCK_LIST || '600519' }}
+          STOCK_LIST: ${{ vars.STOCK_LIST_2 || secrets.STOCK_LIST_2 || '600519' }}
           MARKET_REVIEW_REGION: us
           
           # ==========================================
