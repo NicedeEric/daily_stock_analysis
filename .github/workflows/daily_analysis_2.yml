@@ -1,5 +1,8 @@
 name: 每日股票分析_2
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  
 on:
   # 定时触发 - 每天北京时间 18:00 (UTC 10:00)
   schedule:
