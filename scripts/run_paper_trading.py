@@ -63,20 +63,24 @@ def _build_notify_message(strategy: Dict[str, Any], result: Dict[str, Any]) -> s
     account = result.get("account_snapshot") or {}
     run_date = result.get("run_date") or "-"
     strategy_title = f"{strategy.get('strategy_name')}:{strategy.get('strategy_version')}"
-    total_equity = account.get("total_equity")
-    cash = account.get("cash")
-    lines = [
-        "Paper Trading Daily Update",
-        f"Date: {run_date}",
-        f"Strategy: {strategy_title}",
-        f"Status: {result.get('status', '-')}",
-        f"Executed: {result.get('executed', 0)} | Skipped: {result.get('skipped', 0)} | Errors: {result.get('errors', 0)}",
-    ]
-    if total_equity is not None:
-        lines.append(f"Total Equity: {float(total_equity):.2f}")
-    if cash is not None:
-        lines.append(f"Cash: {float(cash):.2f}")
-    return "\n".join(lines)
+    total_equity = float(account.get("total_equity") or 0.0)
+    cash = float(account.get("total_cash") or 0.0)
+    market_value = float(account.get("total_market_value") or 0.0)
+    exposure = (market_value / total_equity * 100.0) if total_equity > 0 else 0.0
+    return "\n".join(
+        [
+            "Paper Trading Daily Update",
+            "",
+            "| Date | Strategy | Signals | Buy | Sell | Skip | Error | Equity | Cash | Exposure |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            (
+                f"| {run_date} | {strategy_title} | {int(result.get('signals') or 0)} | "
+                f"{int(result.get('planned_buys') or 0)} | {int(result.get('planned_sells') or 0)} | "
+                f"{int(result.get('skipped') or 0)} | {int(result.get('errors') or 0)} | "
+                f"{total_equity:.2f} | {cash:.2f} | {exposure:.1f}% |"
+            ),
+        ]
+    )
 
 
 def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -116,44 +120,71 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
                 "final_decision": snapshot.get("final_decision"),
                 "qty": getattr(row, "execution_quantity", None),
                 "price": getattr(row, "execution_price", None),
+                "notional": getattr(row, "execution_notional", None),
                 "reasons": reasons,
             }
         )
     return items
 
 
-def _format_decisions_block(decisions: list[Dict[str, Any]], max_lines: int = 20) -> str:
+def _fmt_num(value: Any, ndigits: int = 2, default: str = "-") -> str:
+    if value is None:
+        return default
+    try:
+        return f"{float(value):.{ndigits}f}"
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_decisions_block(decisions: list[Dict[str, Any]], max_rows: int = 18) -> str:
     if not decisions:
         return "Decisions: none"
-    buckets = {"buy": [], "sell": [], "skip": [], "error": []}
-    for item in decisions:
-        action = item.get("action") or "skip"
-        if action not in buckets:
-            action = "skip"
-        buckets[action].append(item)
+    rows = sorted(
+        decisions,
+        key=lambda x: (0 if x.get("action") in ("buy", "sell") else 1, str(x.get("code") or "")),
+    )
     lines = [
-        f"Decisions: buy {len(buckets['buy'])} | sell {len(buckets['sell'])} | skip {len(buckets['skip'])} | error {len(buckets['error'])}",
+        "",
+        "| Action | Code | Score | Rule | Qty | Price | Notional | Reason |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
     ]
-    emitted = 1
-    for action in ("buy", "sell", "skip", "error"):
-        rows = buckets[action]
-        if not rows:
-            continue
-        lines.append(f"[{action.upper()}]")
-        emitted += 1
-        for row in rows:
-            reason = ",".join((row.get("reasons") or [])[:2]) or "-"
-            qty = row.get("qty")
-            price = row.get("price")
-            qty_text = f"{float(qty):.0f}" if qty is not None else "-"
-            price_text = f"{float(price):.2f}" if price is not None else "-"
-            lines.append(
-                f"{row['code']} score:{row.get('final_score','-')} rule:{row.get('rule_score','-')} qty:{qty_text} px:{price_text} reason:{reason}"
-            )
-            emitted += 1
-            if emitted >= max_lines:
-                lines.append("...truncated")
-                return "\n".join(lines)
+    for idx, row in enumerate(rows):
+        if idx >= max_rows:
+            lines.append("| ... | ... | ... | ... | ... | ... | ... | truncated |")
+            break
+        reason = ",".join((row.get("reasons") or [])[:2]) or "-"
+        lines.append(
+            f"| {(row.get('action') or '-').upper()} | {row.get('code') or '-'} | "
+            f"{row.get('final_score', '-')} | {row.get('rule_score', '-')} | "
+            f"{_fmt_num(row.get('qty'),0)} | {_fmt_num(row.get('price'))} | {_fmt_num(row.get('notional'))} | {reason} |"
+        )
+    return "\n".join(lines)
+
+
+def _format_positions_block(result: Dict[str, Any], max_rows: int = 12) -> str:
+    account = result.get("account_snapshot") or {}
+    positions = account.get("positions") or []
+    if not positions:
+        return "\n\nPositions: none"
+
+    lines = [
+        "",
+        "| Code | Qty | Avg Cost | Last | PnL% | Weight |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    total_equity = float(account.get("total_equity") or 0.0)
+    for idx, p in enumerate(positions):
+        if idx >= max_rows:
+            lines.append("| ... | ... | ... | ... | ... | ... |")
+            break
+        qty = float(p.get("quantity") or 0.0)
+        avg_cost = float(p.get("avg_cost") or 0.0)
+        last = float(p.get("last_price") or 0.0)
+        weight = (float(p.get("market_value_base") or 0.0) / total_equity * 100.0) if total_equity > 0 else 0.0
+        pnl_pct = ((last - avg_cost) / avg_cost * 100.0) if avg_cost > 0 else 0.0
+        lines.append(
+            f"| {p.get('symbol') or '-'} | {qty:.0f} | {avg_cost:.2f} | {last:.2f} | {pnl_pct:.2f}% | {weight:.2f}% |"
+        )
     return "\n".join(lines)
 
 
@@ -199,7 +230,9 @@ def main() -> int:
         from src.notification import NotificationService
         decisions = _fetch_decisions_for_run(strategy, result)
         notify_message = _build_notify_message(strategy, result)
-        notify_message = f"{notify_message}\n\n{_format_decisions_block(decisions)}"
+        notify_message = f"{notify_message}{_format_decisions_block(decisions)}{_format_positions_block(result)}"
+        if len(notify_message) > 3600:
+            notify_message = notify_message[:3560] + "\n\n...truncated"
         ok = NotificationService().send_to_telegram(notify_message)
         print(f"paper_trading_notify_telegram={'ok' if ok else 'failed'}")
     return 0

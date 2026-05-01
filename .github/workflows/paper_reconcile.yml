@@ -1,0 +1,188 @@
+name: Paper Reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      strategy_version:
+        description: "Strategy version"
+        required: false
+        default: "v1_us"
+      lookback_days:
+        description: "Signal lookback days"
+        required: false
+        default: "3"
+      run_date:
+        description: "Run date YYYY-MM-DD (optional)"
+        required: false
+        default: ""
+      min_delta_shares:
+        description: "Ignore delta below shares"
+        required: false
+        default: "1"
+      notify_paper:
+        description: "Send paper trading telegram message (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: paper-reconcile
+  cancel-in-progress: false
+
+jobs:
+  paper-reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare live portfolio snapshot
+        env:
+          LIVE_PORTFOLIO_JSON: ${{ secrets.LIVE_PORTFOLIO_JSON }}
+        run: |
+          if [ -z "$LIVE_PORTFOLIO_JSON" ]; then
+            echo "LIVE_PORTFOLIO_JSON secret is empty"
+            exit 1
+          fi
+          mkdir -p data logs reports
+          printf '%s' "$LIVE_PORTFOLIO_JSON" > data/live_portfolio.json
+          python -m json.tool data/live_portfolio.json > /dev/null
+
+      - name: Run paper trading
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
+          PAPER_STRATEGY_NAME: signal_portfolio
+          PAPER_STRATEGY_VERSION: ${{ github.event.inputs.strategy_version || 'v1_us' }}
+          PAPER_INITIAL_CAPITAL: "20000"
+          PAPER_MARKET: us
+          PAPER_BASE_CURRENCY: USD
+          PAPER_MAX_POSITIONS: "5"
+          PAPER_MAX_POSITION_PCT: "0.20"
+          PAPER_CASH_RESERVE_PCT: "0.20"
+          PAPER_MIN_BUY_SCORE: "70"
+          PAPER_MIN_RULE_SCORE: "65"
+          PAPER_SELL_SCORE_THRESHOLD: "40"
+          PAPER_TRADE_FEE_USD: "1.3"
+          PAPER_SLIPPAGE_BPS: "5"
+          PAPER_SIGNAL_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '3' }}
+          PAPER_NOTIFY: ${{ github.event.inputs.notify_paper || 'false' }}
+          PAPER_RUN_DATE: ${{ github.event.inputs.run_date }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+        run: |
+          python scripts/run_paper_trading.py --output-json data/paper_trading_result.json
+
+      - name: Reconcile live vs paper target
+        run: |
+          python scripts/reconcile_live_portfolio.py \
+            --live-json data/live_portfolio.json \
+            --paper-json data/paper_trading_result.json \
+            --min-delta-shares ${{ github.event.inputs.min_delta_shares || '1' }} \
+            --output-json data/reconcile_orders.json
+
+      - name: Show reconcile summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("data/reconcile_orders.json").read_text(encoding="utf-8"))
+          summary = payload.get("summary") or {}
+          print("order_count=", summary.get("order_count", 0))
+          print("buy_count=", summary.get("buy_count", 0))
+          print("sell_count=", summary.get("sell_count", 0))
+          print("live_as_of=", payload.get("live_as_of"))
+          print("paper_run_date=", payload.get("paper_run_date"))
+          PY
+
+      - name: Send reconcile result to Telegram
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+          import urllib.parse
+          from pathlib import Path
+
+          payload = json.loads(Path("data/reconcile_orders.json").read_text(encoding="utf-8"))
+          summary = payload.get("summary") or {}
+          orders = payload.get("delta_orders") or []
+          strategy = payload.get("strategy") or {}
+
+          lines = [
+              "Paper Reconcile Update",
+              f"Live As-Of: {payload.get('live_as_of') or '-'}",
+              f"Paper Date: {payload.get('paper_run_date') or '-'}",
+              f"Strategy: {(strategy.get('name') or '-')}/{(strategy.get('version') or '-')}",
+              f"Orders: {summary.get('order_count', 0)} (Buy {summary.get('buy_count', 0)} / Sell {summary.get('sell_count', 0)})",
+              "",
+          ]
+
+          if not orders:
+              lines.append("Delta Orders: none")
+          else:
+              lines.append("Delta Orders:")
+              for idx, order in enumerate(orders[:20], start=1):
+                  lines.append(
+                      f"{idx}. {order.get('side', '').upper()} {order.get('symbol', '-')}"
+                      f" qty={order.get('order_qty', 0)} target={order.get('target_qty', 0)} live={order.get('live_qty', 0)}"
+                  )
+              if len(orders) > 20:
+                  lines.append(f"... truncated, total {len(orders)} orders")
+
+          text = "\n".join(lines)
+          if len(text) > 3500:
+              text = text[:3450] + "\n... truncated"
+
+          bot_token = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          chat_id = "${{ secrets.TELEGRAM_CHAT_ID }}"
+          thread_id = "${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}"
+          url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+          data = {
+              "chat_id": chat_id,
+              "text": text,
+              "disable_web_page_preview": True,
+          }
+          if thread_id:
+              data["message_thread_id"] = thread_id
+
+          req = urllib.request.Request(
+              url,
+              data=urllib.parse.urlencode(data).encode("utf-8"),
+              headers={"Content-Type": "application/x-www-form-urlencoded"},
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              body = resp.read().decode("utf-8", errors="ignore")
+              print("telegram_status=ok")
+              print(body[:300])
+          PY
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-reconcile-${{ github.run_number }}
+          path: |
+            data/live_portfolio.json
+            data/paper_trading_result.json
+            data/reconcile_orders.json
+            logs/
+          retention-days: 30
