@@ -1,0 +1,75 @@
+name: 纸面交易决策
+
+on:
+  schedule:
+    - cron: '40 0 * * 1-5'  # UTC 00:40, after analysis workflows
+  workflow_dispatch:
+    inputs:
+      strategy_version:
+        description: '策略版本'
+        required: false
+        default: 'v1_us'
+      lookback_days:
+        description: '信号回看天数 (可选, 默认3)'
+        required: false
+        default: '3'
+      run_date:
+        description: '运行日期 YYYY-MM-DD (可选)'
+        required: false
+        default: ''
+
+concurrency:
+  group: paper-trading
+  cancel-in-progress: false
+
+jobs:
+  run-paper-trading:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 运行 paper trading
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
+          PAPER_STRATEGY_NAME: signal_portfolio
+          PAPER_STRATEGY_VERSION: ${{ github.event.inputs.strategy_version || 'v1_us' }}
+          PAPER_INITIAL_CAPITAL: '20000'
+          PAPER_MARKET: us
+          PAPER_BASE_CURRENCY: USD
+          PAPER_MAX_POSITIONS: '5'
+          PAPER_MAX_POSITION_PCT: '0.20'
+          PAPER_CASH_RESERVE_PCT: '0.20'
+          PAPER_MIN_BUY_SCORE: '70'
+          PAPER_MIN_RULE_SCORE: '65'
+          PAPER_SELL_SCORE_THRESHOLD: '40'
+          PAPER_TRADE_FEE_USD: '1.3'
+          PAPER_SLIPPAGE_BPS: '5'
+          PAPER_SIGNAL_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '3' }}
+          PAPER_RUN_DATE: ${{ github.event.inputs.run_date }}
+        run: |
+          mkdir -p data logs reports
+          python scripts/run_paper_trading.py --output-json data/paper_trading_result.json
+
+      - name: 上传 paper trading 结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-trading-${{ github.run_number }}
+          path: |
+            data/paper_trading_result.json
+            logs/
+          retention-days: 30

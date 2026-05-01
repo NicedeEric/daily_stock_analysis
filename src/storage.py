@@ -457,6 +457,68 @@ class BacktestSummary(Base):
     )
 
 
+class PaperStrategyDefinition(Base):
+    """Paper trading strategy definition with versioned config."""
+
+    __tablename__ = 'paper_strategy_definitions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(String(64), nullable=False, index=True)
+    strategy_version = Column(String(32), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey('portfolio_accounts.id'), nullable=False, index=True)
+    market = Column(String(8), nullable=False, default='us', index=True)
+    base_currency = Column(String(8), nullable=False, default='USD')
+    initial_capital = Column(Float, nullable=False, default=20000.0)
+    status = Column(String(16), nullable=False, default='active', index=True)  # active/paused/archived
+    config_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'strategy_name',
+            'strategy_version',
+            name='uix_paper_strategy_name_version',
+        ),
+        Index('ix_paper_strategy_account_status', 'account_id', 'status'),
+    )
+
+
+class PaperStrategyDecision(Base):
+    """Daily paper strategy decision and execution trace."""
+
+    __tablename__ = 'paper_strategy_decisions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(Integer, ForeignKey('paper_strategy_definitions.id'), nullable=False, index=True)
+    run_date = Column(Date, nullable=False, index=True)
+    code = Column(String(16), nullable=False, index=True)
+    action = Column(String(16), nullable=False, index=True)  # buy/sell/hold/skip
+    signal_date = Column(Date, index=True)
+    analysis_history_id = Column(Integer, ForeignKey('analysis_history.id'), index=True)
+    target_weight = Column(Float)
+    signal_snapshot_json = Column(Text, nullable=False)
+    reason_codes_json = Column(Text, nullable=False)
+    status = Column(String(16), nullable=False, default='planned', index=True)  # planned/executed/skipped/error
+    executed_trade_id = Column(Integer, ForeignKey('portfolio_trades.id'))
+    execution_price = Column(Float)
+    execution_quantity = Column(Float)
+    execution_notional = Column(Float)
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'strategy_id',
+            'run_date',
+            'code',
+            name='uix_paper_strategy_daily_decision',
+        ),
+        Index('ix_paper_decision_strategy_run', 'strategy_id', 'run_date'),
+    )
+
+
 class PortfolioAccount(Base):
     """Portfolio account metadata."""
 
