@@ -15,7 +15,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from sqlalchemy import and_, select
+
 from src.services.paper_trading_service import PaperTradingService
+from src.storage import DatabaseManager, PaperStrategyDecision
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -35,6 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trade-fee-usd", type=float, default=float(os.getenv("PAPER_TRADE_FEE_USD", "1.3")))
     parser.add_argument("--slippage-bps", type=float, default=float(os.getenv("PAPER_SLIPPAGE_BPS", "5")))
     parser.add_argument("--lookback-days", type=int, default=int(os.getenv("PAPER_SIGNAL_LOOKBACK_DAYS", "3")))
+    parser.add_argument("--notify", default=os.getenv("PAPER_NOTIFY", "false"))
     parser.add_argument("--output-json", default=os.getenv("PAPER_OUTPUT_JSON", "data/paper_trading_result.json"))
     return parser
 
@@ -49,6 +53,108 @@ def _parse_run_date(raw: str):
 def _dump_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _as_bool(value: str) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_notify_message(strategy: Dict[str, Any], result: Dict[str, Any]) -> str:
+    account = result.get("account_snapshot") or {}
+    run_date = result.get("run_date") or "-"
+    strategy_title = f"{strategy.get('strategy_name')}:{strategy.get('strategy_version')}"
+    total_equity = account.get("total_equity")
+    cash = account.get("cash")
+    lines = [
+        "Paper Trading Daily Update",
+        f"Date: {run_date}",
+        f"Strategy: {strategy_title}",
+        f"Status: {result.get('status', '-')}",
+        f"Executed: {result.get('executed', 0)} | Skipped: {result.get('skipped', 0)} | Errors: {result.get('errors', 0)}",
+    ]
+    if total_equity is not None:
+        lines.append(f"Total Equity: {float(total_equity):.2f}")
+    if cash is not None:
+        lines.append(f"Cash: {float(cash):.2f}")
+    return "\n".join(lines)
+
+
+def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -> list[Dict[str, Any]]:
+    run_date = datetime.strptime(str(result.get("run_date"))[:10], "%Y-%m-%d").date()
+    strategy_id = int(strategy["id"])
+    db = DatabaseManager.get_instance()
+    items: list[Dict[str, Any]] = []
+    with db.get_session() as session:
+        rows = session.execute(
+            select(PaperStrategyDecision).where(
+                and_(
+                    PaperStrategyDecision.strategy_id == strategy_id,
+                    PaperStrategyDecision.run_date == run_date,
+                )
+            )
+        ).scalars().all()
+    for row in rows:
+        snapshot = {}
+        reasons = []
+        if getattr(row, "signal_snapshot_json", None):
+            try:
+                snapshot = json.loads(row.signal_snapshot_json) or {}
+            except Exception:
+                snapshot = {}
+        if getattr(row, "reason_codes_json", None):
+            try:
+                reasons = json.loads(row.reason_codes_json) or []
+            except Exception:
+                reasons = []
+        items.append(
+            {
+                "code": str(row.code),
+                "action": str(row.action or "").lower(),
+                "status": str(row.status or "").lower(),
+                "final_score": snapshot.get("final_score"),
+                "rule_score": snapshot.get("rule_score"),
+                "final_decision": snapshot.get("final_decision"),
+                "qty": getattr(row, "execution_quantity", None),
+                "price": getattr(row, "execution_price", None),
+                "reasons": reasons,
+            }
+        )
+    return items
+
+
+def _format_decisions_block(decisions: list[Dict[str, Any]], max_lines: int = 20) -> str:
+    if not decisions:
+        return "Decisions: none"
+    buckets = {"buy": [], "sell": [], "skip": [], "error": []}
+    for item in decisions:
+        action = item.get("action") or "skip"
+        if action not in buckets:
+            action = "skip"
+        buckets[action].append(item)
+    lines = [
+        f"Decisions: buy {len(buckets['buy'])} | sell {len(buckets['sell'])} | skip {len(buckets['skip'])} | error {len(buckets['error'])}",
+    ]
+    emitted = 1
+    for action in ("buy", "sell", "skip", "error"):
+        rows = buckets[action]
+        if not rows:
+            continue
+        lines.append(f"[{action.upper()}]")
+        emitted += 1
+        for row in rows:
+            reason = ",".join((row.get("reasons") or [])[:2]) or "-"
+            qty = row.get("qty")
+            price = row.get("price")
+            qty_text = f"{float(qty):.0f}" if qty is not None else "-"
+            price_text = f"{float(price):.2f}" if price is not None else "-"
+            lines.append(
+                f"{row['code']} score:{row.get('final_score','-')} rule:{row.get('rule_score','-')} qty:{qty_text} px:{price_text} reason:{reason}"
+            )
+            emitted += 1
+            if emitted >= max_lines:
+                lines.append("...truncated")
+                return "\n".join(lines)
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -89,6 +195,13 @@ def main() -> int:
     print(f"paper_trading_skipped={result.get('skipped')}")
     print(f"paper_trading_errors={result.get('errors')}")
     print(f"paper_trading_output={output_path.resolve()}")
+    if _as_bool(args.notify):
+        from src.notification import NotificationService
+        decisions = _fetch_decisions_for_run(strategy, result)
+        notify_message = _build_notify_message(strategy, result)
+        notify_message = f"{notify_message}\n\n{_format_decisions_block(decisions)}"
+        ok = NotificationService().send_to_telegram(notify_message)
+        print(f"paper_trading_notify_telegram={'ok' if ok else 'failed'}")
     return 0
 
 

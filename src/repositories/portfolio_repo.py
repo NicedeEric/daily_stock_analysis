@@ -136,8 +136,13 @@ class PortfolioRepository:
     @contextmanager
     def portfolio_write_session(self):
         session = self.db.get_session()
+        dialect_name = ""
         try:
-            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            bind = session.get_bind()
+            dialect_name = str(getattr(getattr(bind, "dialect", None), "name", "")).lower()
+            if dialect_name == "sqlite":
+                # SQLite-only write lock mode to serialize ledger writes.
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         except OperationalError as exc:
             session.close()
             if self._is_sqlite_locked_error(exc):
