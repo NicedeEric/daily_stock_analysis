@@ -234,7 +234,13 @@ class StockAnalysisPipeline:
             logger.error(f"{stock_name}({code}) {error_msg}")
             return False, error_msg
     
-    def analyze_stock(self, code: str, report_type: ReportType, query_id: str) -> Optional[AnalysisResult]:
+    def analyze_stock(
+        self,
+        code: str,
+        report_type: ReportType,
+        query_id: str,
+        current_time: Optional[datetime] = None,
+    ) -> Optional[AnalysisResult]:
         """
         分析单只股票（增强版：含量比、换手率、筹码分析、多维度情报）
         
@@ -432,7 +438,10 @@ class StockAnalysisPipeline:
 
             # Step 5: 获取分析上下文（技术面数据）
             self._emit_progress(58, f"{stock_name}：正在整理分析上下文")
-            context = self.db.get_analysis_context(code)
+            context = self.db.get_analysis_context(
+                code,
+                target_date=self._resolve_resume_target_date(code, current_time=current_time),
+            )
 
             if context is None:
                 logger.warning(f"{stock_name}({code}) 无法获取历史行情数据，将仅基于新闻和实时行情分析")
@@ -1418,7 +1427,19 @@ class StockAnalysisPipeline:
         """
         构建分析上下文快照
         """
+        analysis_date = None
+        analysis_close = None
+        try:
+            analysis_date = (enhanced_context or {}).get("date")
+            today = (enhanced_context or {}).get("today") or {}
+            analysis_close = today.get("close")
+        except Exception:
+            analysis_date = None
+            analysis_close = None
+
         return {
+            "analysis_date": analysis_date,
+            "analysis_close": analysis_close,
             "enhanced_context": enhanced_context,
             "news_content": news_content,
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
@@ -1556,7 +1577,12 @@ class StockAnalysisPipeline:
                 return None
             
             effective_query_id = analysis_query_id or self.query_id or uuid.uuid4().hex
-            result = self.analyze_stock(code, report_type, query_id=effective_query_id)
+            result = self.analyze_stock(
+                code,
+                report_type,
+                query_id=effective_query_id,
+                current_time=current_time,
+            )
             
             if result and result.success:
                 logger.info(
@@ -1590,7 +1616,8 @@ class StockAnalysisPipeline:
         stock_codes: Optional[List[str]] = None,
         dry_run: bool = False,
         send_notification: bool = True,
-        merge_notification: bool = False
+        merge_notification: bool = False,
+        current_time: Optional[datetime] = None,
     ) -> List[AnalysisResult]:
         """
         运行完整的分析流程
@@ -1626,7 +1653,7 @@ class StockAnalysisPipeline:
         logger.info(f"并发数: {self.max_workers}, 模式: {'仅获取数据' if dry_run else '完整分析'}")
 
         # 冻结本轮运行的统一参考时间，避免跨市场收盘边界时同批股票使用不同目标交易日。
-        resume_reference_time = datetime.now(timezone.utc)
+        resume_reference_time = current_time or datetime.now(timezone.utc)
         
         # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
         # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效

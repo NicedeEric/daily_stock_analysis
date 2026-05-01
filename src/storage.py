@@ -251,6 +251,8 @@ class AnalysisHistory(Base):
     secondary_buy = Column(Float)
     stop_loss = Column(Float)
     take_profit = Column(Float)
+    analysis_date = Column(Date, index=True)
+    analysis_close = Column(Float)
 
     created_at = Column(DateTime, default=datetime.now, index=True)
 
@@ -283,6 +285,8 @@ class AnalysisHistory(Base):
             'secondary_buy': self.secondary_buy,
             'stop_loss': self.stop_loss,
             'take_profit': self.take_profit,
+            'analysis_date': self.analysis_date.isoformat() if self.analysis_date else None,
+            'analysis_close': self.analysis_close,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -1400,9 +1404,16 @@ class DatabaseManager:
         context_text = None
         if save_snapshot and context_snapshot is not None:
             context_text = self._safe_json_dumps(context_snapshot)
+        analysis_date, analysis_close = self._extract_analysis_anchor(context_snapshot)
 
         try:
             def _write(session: Session) -> int:
+                aligned_date, aligned_close = self._align_analysis_anchor_with_daily(
+                    session=session,
+                    code=result.code,
+                    analysis_date=analysis_date,
+                    analysis_close=analysis_close,
+                )
                 session.add(
                     AnalysisHistory(
                         query_id=query_id,
@@ -1421,11 +1432,13 @@ class DatabaseManager:
                         prompt_version=structured_signal.get("prompt_version"),
                         raw_result=self._safe_json_dumps(raw_result),
                         news_content=news_content,
-                        context_snapshot=context_text,
-                        ideal_buy=sniper_points.get("ideal_buy"),
-                        secondary_buy=sniper_points.get("secondary_buy"),
-                        stop_loss=sniper_points.get("stop_loss"),
-                        take_profit=sniper_points.get("take_profit"),
+                          context_snapshot=context_text,
+                          ideal_buy=sniper_points.get("ideal_buy"),
+                          secondary_buy=sniper_points.get("secondary_buy"),
+                          stop_loss=sniper_points.get("stop_loss"),
+                          take_profit=sniper_points.get("take_profit"),
+                        analysis_date=aligned_date,
+                        analysis_close=aligned_close,
                         created_at=datetime.now(),
                     )
                 )
@@ -1437,6 +1450,75 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"保存分析历史失败: {e}")
             return 0
+
+    @staticmethod
+    def _extract_analysis_anchor(
+        context_snapshot: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[date], Optional[float]]:
+        if not isinstance(context_snapshot, dict):
+            return None, None
+
+        raw_date = context_snapshot.get("analysis_date")
+        raw_close = context_snapshot.get("analysis_close")
+
+        if raw_date is None:
+            raw_date = ((context_snapshot.get("enhanced_context") or {}).get("date"))
+        if raw_close is None:
+            raw_close = (((context_snapshot.get("enhanced_context") or {}).get("today") or {}).get("close"))
+
+        parsed_date: Optional[date] = None
+        if isinstance(raw_date, date):
+            parsed_date = raw_date
+        elif isinstance(raw_date, str) and raw_date.strip():
+            try:
+                parsed_date = datetime.strptime(raw_date[:10], "%Y-%m-%d").date()
+            except ValueError:
+                parsed_date = None
+
+        parsed_close: Optional[float] = None
+        if raw_close is not None:
+            try:
+                parsed_close = float(raw_close)
+            except (TypeError, ValueError):
+                parsed_close = None
+
+        return parsed_date, parsed_close
+
+    @staticmethod
+    def _align_analysis_anchor_with_daily(
+        *,
+        session: Session,
+        code: str,
+        analysis_date: Optional[date],
+        analysis_close: Optional[float],
+    ) -> Tuple[Optional[date], Optional[float]]:
+        """Align analysis anchor to available stock_daily rows for consistency."""
+        if not code:
+            return analysis_date, analysis_close
+
+        target = analysis_date or date.today()
+        row = session.execute(
+            select(StockDaily)
+            .where(
+                and_(
+                    StockDaily.code == code,
+                    StockDaily.date <= target,
+                )
+            )
+            .order_by(desc(StockDaily.date))
+            .limit(1)
+        ).scalar_one_or_none()
+        if row is None:
+            return analysis_date, analysis_close
+
+        aligned_date = row.date
+        aligned_close = analysis_close
+        if aligned_close is None and row.close is not None:
+            try:
+                aligned_close = float(row.close)
+            except (TypeError, ValueError):
+                aligned_close = analysis_close
+        return aligned_date, aligned_close
 
     def save_analysis_failure_audit(
         self,
@@ -1884,14 +1966,20 @@ class DatabaseManager:
         """
         if target_date is None:
             target_date = date.today()
-        # 注意：尽管入参提供了 target_date，但当前实现实际使用的是“最新两天数据”（get_latest_data），
-        # 并不会按 target_date 精确取当日/前一交易日的上下文。
-        # 因此若未来需要支持“按历史某天复盘/重算”的可解释性，这里需要调整。
-        # 该行为目前保留（按需求不改逻辑）。
-        
-        # 获取最近2天数据
-        recent_data = self.get_latest_data(code, days=2)
-        
+
+        with self.get_session() as session:
+            recent_data = session.execute(
+                select(StockDaily)
+                .where(
+                    and_(
+                        StockDaily.code == code,
+                        StockDaily.date <= target_date,
+                    )
+                )
+                .order_by(desc(StockDaily.date))
+                .limit(2)
+            ).scalars().all()
+
         if not recent_data:
             logger.warning(f"未找到 {code} 的数据")
             return None

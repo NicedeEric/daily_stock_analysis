@@ -330,6 +330,20 @@ def parse_arguments() -> argparse.Namespace:
         help='不保存分析上下文快照'
     )
 
+    parser.add_argument(
+        '--analysis-date',
+        type=str,
+        default=None,
+        help='锚定分析日期 YYYY-MM-DD（例如 2026-05-01）'
+    )
+
+    parser.add_argument(
+        '--analysis-lookback-days',
+        type=int,
+        default=1,
+        help='回补分析天数（按交易日计，默认 1）'
+    )
+
     # === Backtest ===
     parser.add_argument(
         '--backtest',
@@ -402,10 +416,45 @@ def _compute_trading_day_filter(
     return (filtered_codes, effective_region, should_skip_all)
 
 
+def _parse_analysis_date(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    return datetime.strptime(value[:10], "%Y-%m-%d")
+
+
+def _build_analysis_run_dates(anchor_dt: datetime, lookback_days: int) -> List[datetime]:
+    from src.core.trading_calendar import get_effective_trading_date
+
+    days = max(1, int(lookback_days or 1))
+    market_tz = timezone(timedelta(hours=-4))
+    cursor = anchor_dt.replace(hour=23, minute=59, second=0, microsecond=0, tzinfo=market_tz)
+    run_dates: List[datetime] = []
+    seen_dates = set()
+    while len(run_dates) < days:
+        trading_day = get_effective_trading_date("us", current_time=cursor)
+        if trading_day not in seen_dates:
+            seen_dates.add(trading_day)
+            run_dates.append(
+                datetime(
+                    trading_day.year,
+                    trading_day.month,
+                    trading_day.day,
+                    23,
+                    59,
+                    0,
+                    tzinfo=market_tz,
+                )
+            )
+        cursor = cursor - timedelta(days=1)
+    run_dates.sort()
+    return run_dates
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
-    stock_codes: Optional[List[str]] = None
+    stock_codes: Optional[List[str]] = None,
+    current_time: Optional[datetime] = None,
 ):
     """
     执行完整的分析流程（个股 + 大盘复盘）
@@ -467,7 +516,8 @@ def run_full_analysis(
             stock_codes=stock_codes,
             dry_run=args.dry_run,
             send_notification=not args.no_notify,
-            merge_notification=merge_notification
+            merge_notification=merge_notification,
+            current_time=current_time,
         )
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
@@ -934,7 +984,23 @@ def main() -> int:
 
         # 模式3: 正常单次运行
         if config.run_immediately:
-            run_full_analysis(config, args, stock_codes)
+            anchor_dt = _parse_analysis_date(getattr(args, "analysis_date", None))
+            lookback_days = max(1, int(getattr(args, "analysis_lookback_days", 1) or 1))
+            if anchor_dt is not None or lookback_days > 1:
+                if anchor_dt is None:
+                    anchor_dt = datetime.now()
+                run_dates = _build_analysis_run_dates(anchor_dt, lookback_days)
+                logger.info(
+                    "历史批跑模式: anchor=%s lookback_days=%s trading_days=%s",
+                    anchor_dt.strftime("%Y-%m-%d"),
+                    lookback_days,
+                    ",".join(d.strftime("%Y-%m-%d") for d in run_dates),
+                )
+                for run_dt in run_dates:
+                    logger.info("开始历史分析日: %s", run_dt.strftime("%Y-%m-%d"))
+                    run_full_analysis(config, args, stock_codes, current_time=run_dt)
+            else:
+                run_full_analysis(config, args, stock_codes)
         else:
             logger.info("配置为不立即运行分析 (RUN_IMMEDIATELY=false)")
 

@@ -1,0 +1,149 @@
+name: 每日股票分析_3
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  schedule:
+    - cron: '5 0 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式'
+        required: true
+        default: 'stocks-only'
+        type: choice
+        options:
+          - stocks-only
+          - market-only
+          - full
+      force_run:
+        description: '强制运行（跳过交易日检查）'
+        required: false
+        default: false
+        type: boolean
+      analysis_date:
+        description: '分析日期 YYYY-MM-DD（可选）'
+        required: false
+        default: ''
+      analysis_lookback_days:
+        description: '回补交易日天数（可选，默认1）'
+        required: false
+        default: '1'
+
+concurrency:
+  group: stock-analysis-3
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 随机延迟
+        run: sleep $((RANDOM % 60))
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare directories
+        run: |
+          mkdir -p data logs reports
+
+      - name: Run analysis
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY_3 }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS_3 }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL_3 || secrets.GEMINI_MODEL_3 || vars.GEMINI_MODEL || secrets.GEMINI_MODEL }}
+          GEMINI_MODEL_FALLBACK: ${{ vars.GEMINI_MODEL_FALLBACK_3 || secrets.GEMINI_MODEL_FALLBACK_3 || vars.GEMINI_MODEL_FALLBACK || secrets.GEMINI_MODEL_FALLBACK }}
+          GEMINI_REQUEST_DELAY: ${{ vars.GEMINI_REQUEST_DELAY_3 || secrets.GEMINI_REQUEST_DELAY_3 || vars.GEMINI_REQUEST_DELAY || '3.0' }}
+
+          AIHUBMIX_KEY: ${{ secrets.AIHUBMIX_KEY_3 || secrets.AIHUBMIX_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY_3 || secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL_3 || secrets.OPENAI_BASE_URL_3 || vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL_3 || secrets.OPENAI_MODEL_3 || vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_3 || secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL_3 || secrets.ANTHROPIC_MODEL_3 || vars.ANTHROPIC_MODEL || secrets.ANTHROPIC_MODEL }}
+
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN_3 || secrets.TUSHARE_TOKEN }}
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS_3 || secrets.BOCHA_API_KEYS }}
+          TAVILY_API_KEYS: ${{ vars.TAVILY_API_KEYS_3 || secrets.TAVILY_API_KEYS_3 || vars.TAVILY_API_KEYS || secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS_3 || secrets.SERPAPI_API_KEYS }}
+
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL_3 || secrets.WECHAT_WEBHOOK_URL }}
+          WECHAT_MSG_TYPE: ${{ vars.WECHAT_MSG_TYPE_3 || secrets.WECHAT_MSG_TYPE_3 || vars.WECHAT_MSG_TYPE || secrets.WECHAT_MSG_TYPE }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL_3 || secrets.FEISHU_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN_3 || secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_3 || secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID_3 || secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+          EMAIL_SENDER: ${{ vars.EMAIL_SENDER_3 || secrets.EMAIL_SENDER_3 || vars.EMAIL_SENDER || secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD_3 || secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ vars.EMAIL_RECEIVERS_3 || secrets.EMAIL_RECEIVERS_3 || vars.EMAIL_RECEIVERS || secrets.EMAIL_RECEIVERS }}
+          EMAIL_SENDER_NAME: ${{ vars.EMAIL_SENDER_NAME_3 || secrets.EMAIL_SENDER_NAME_3 || vars.EMAIL_SENDER_NAME || secrets.EMAIL_SENDER_NAME }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN_3 || secrets.PUSHPLUS_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL_3 || secrets.DISCORD_WEBHOOK_URL }}
+          ASTRBOT_URL: ${{ secrets.ASTRBOT_URL_3 || secrets.ASTRBOT_URL }}
+          ASTRBOT_TOKEN: ${{ secrets.ASTRBOT_TOKEN_3 || secrets.ASTRBOT_TOKEN }}
+          SERVERCHAN3_SENDKEY: ${{ secrets.SERVERCHAN3_SENDKEY_3 || secrets.SERVERCHAN3_SENDKEY }}
+
+          STOCK_LIST: ${{ vars.STOCK_LIST_3 || secrets.STOCK_LIST_3 }}
+          MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION_3 || secrets.MARKET_REVIEW_REGION_3 || 'us' }}
+          REPORT_TYPE: ${{ vars.REPORT_TYPE_3 || secrets.REPORT_TYPE_3 || vars.REPORT_TYPE || secrets.REPORT_TYPE }}
+          SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY_3 || secrets.SINGLE_STOCK_NOTIFY_3 || vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY }}
+          MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED_3 || secrets.MARKET_REVIEW_ENABLED_3 || vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED }}
+          ANALYSIS_DELAY: ${{ vars.ANALYSIS_DELAY_3 || secrets.ANALYSIS_DELAY_3 || vars.ANALYSIS_DELAY || secrets.ANALYSIS_DELAY }}
+          TRADING_DAY_CHECK_ENABLED: ${{ vars.TRADING_DAY_CHECK_ENABLED_3 || secrets.TRADING_DAY_CHECK_ENABLED_3 || vars.TRADING_DAY_CHECK_ENABLED || secrets.TRADING_DAY_CHECK_ENABLED }}
+
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
+          LOG_LEVEL: INFO
+          MAX_WORKERS: ${{ vars.MAX_WORKERS_3 || secrets.MAX_WORKERS_3 || vars.MAX_WORKERS || secrets.MAX_WORKERS }}
+          ENABLE_CHIP_DISTRIBUTION: ${{ vars.ENABLE_CHIP_DISTRIBUTION_3 || secrets.ENABLE_CHIP_DISTRIBUTION_3 || 'false' }}
+          REALTIME_SOURCE_PRIORITY: ${{ vars.REALTIME_SOURCE_PRIORITY_3 || secrets.REALTIME_SOURCE_PRIORITY_3 || vars.REALTIME_SOURCE_PRIORITY || 'tencent,akshare_sina,efinance,akshare_em' }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'stocks-only' }}"
+
+          FORCE_RUN_ARG=""
+          if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
+            FORCE_RUN_ARG="--force-run"
+          fi
+
+          ANALYSIS_DATE_ARG=""
+          if [ -n "${{ github.event.inputs.analysis_date }}" ]; then
+            ANALYSIS_DATE_ARG="--analysis-date ${{ github.event.inputs.analysis_date }}"
+          fi
+
+          ANALYSIS_LOOKBACK_ARG=""
+          if [ -n "${{ github.event.inputs.analysis_lookback_days }}" ]; then
+            ANALYSIS_LOOKBACK_ARG="--analysis-lookback-days ${{ github.event.inputs.analysis_lookback_days }}"
+          fi
+
+          if [ "$MODE" = "market-only" ]; then
+            python main.py --market-review $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+          elif [ "$MODE" = "stocks-only" ]; then
+            python main.py --no-market-review $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+          else
+            python main.py $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+          fi
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analysis-reports-3-${{ github.run_number }}
+          path: |
+            reports/
+            logs/
+          retention-days: 30
