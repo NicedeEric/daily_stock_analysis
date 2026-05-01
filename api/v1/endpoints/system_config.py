@@ -11,11 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from api.deps import get_system_config_service
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.system_config import (
+    DiscoverLLMChannelModelsRequest,
+    DiscoverLLMChannelModelsResponse,
     ExportSystemConfigResponse,
     ImportSystemConfigRequest,
     SystemConfigConflictResponse,
     SystemConfigResponse,
     SystemConfigSchemaResponse,
+    SetupStatusResponse,
     SystemConfigValidationErrorResponse,
     TestLLMChannelRequest,
     TestLLMChannelResponse,
@@ -74,6 +77,35 @@ def get_system_config(
             detail={
                 "error": "internal_error",
                 "message": "Failed to load system configuration",
+            },
+        )
+
+
+@router.get(
+    "/config/setup/status",
+    response_model=SetupStatusResponse,
+    responses={
+        200: {"description": "Setup status loaded"},
+        401: {"description": "Unauthorized", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
+    summary="Get first-run setup status",
+    description="Read a side-effect-free setup readiness summary from saved and runtime configuration.",
+)
+def get_setup_status(
+    service: SystemConfigService = Depends(get_system_config_service),
+) -> SetupStatusResponse:
+    """Return first-run setup status without writing config or reloading runtime state."""
+    try:
+        payload = service.get_setup_status()
+        return SetupStatusResponse.model_validate(payload)
+    except Exception as exc:
+        logger.error("Failed to load setup status: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": "Failed to load setup status",
             },
         )
 
@@ -309,6 +341,50 @@ def test_llm_channel(
             detail={
                 "error": "internal_error",
                 "message": "Failed to test LLM channel",
+            },
+        )
+
+
+@router.post(
+    "/config/llm/discover-models",
+    response_model=DiscoverLLMChannelModelsResponse,
+    responses={
+        200: {"description": "Model discovery completed"},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
+    summary="Discover models for one LLM channel",
+    description="Call one unsaved or saved channel's `/models` endpoint and return discovered model IDs.",
+)
+def discover_llm_channel_models(
+    request: DiscoverLLMChannelModelsRequest,
+    service: SystemConfigService = Depends(get_system_config_service),
+) -> DiscoverLLMChannelModelsResponse:
+    """Discover models for one channel definition without writing `.env`."""
+    try:
+        payload = service.discover_llm_channel_models(
+            name=request.name,
+            protocol=request.protocol,
+            base_url=request.base_url,
+            api_key=request.api_key,
+            models=request.models,
+            timeout_seconds=request.timeout_seconds,
+        )
+        return DiscoverLLMChannelModelsResponse.model_validate(payload)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "validation_error",
+                "message": str(exc),
+            },
+        )
+    except Exception as exc:
+        logger.error("Failed to discover LLM channel models: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": "Failed to discover LLM channel models",
             },
         )
 
