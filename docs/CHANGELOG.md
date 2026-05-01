@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 修复 `daily_analysis_2/_3` 与配置加载在 `GEMINI_MODEL` 为空时生成 `gemini/` 无效模型名的问题，并为 Gemini 模型默认值增加兜底。
 - [新功能] 新增 `paper_reconcile` GitHub Actions：从 `LIVE_PORTFOLIO_JSON` Secret 生成实盘快照并产出 `reconcile_orders.json` 调仓清单。
 - [改进] `analysis_history` 新增显式字段 `analysis_date` / `analysis_close`，便于按交易日查询与回测。
 - [改进] 新增 Supabase 迁移 SQL：`scripts/sql/supabase_analysis_history_date_migration.sql`，支持从 `context_snapshot` 回填历史日期与收盘价。

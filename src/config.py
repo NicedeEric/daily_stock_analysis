@@ -83,6 +83,26 @@ def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
     return normalized not in _FALSEY_ENV_VALUES
 
 
+def get_env_stripped(name: str, default: str = "") -> str:
+    """Read an env var and fall back when the value is missing or blank."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    stripped = raw_value.strip()
+    return stripped if stripped else default
+
+
+def is_incomplete_litellm_model(value: Optional[str]) -> bool:
+    """Return True when a LiteLLM model string is missing the model portion."""
+    candidate = (value or "").strip()
+    if not candidate:
+        return True
+    if "/" not in candidate:
+        return False
+    prefix, remainder = candidate.split("/", 1)
+    return not prefix.strip() or not remainder.strip()
+
+
 def parse_env_int(
     value: Optional[str],
     default: int,
@@ -1089,12 +1109,18 @@ class Config:
                 deepseek_api_keys = [_single_deepseek]
 
         # LITELLM_MODEL: explicit config takes precedence; else infer from available keys
-        litellm_model = os.getenv('LITELLM_MODEL', '').strip()
+        litellm_model = get_env_stripped('LITELLM_MODEL', '')
+        if litellm_model and is_incomplete_litellm_model(litellm_model):
+            logger.warning(
+                "LITELLM_MODEL=%r is incomplete; ignoring it and falling back to provider defaults",
+                litellm_model,
+            )
+            litellm_model = ""
         inferred_legacy_deepseek_model = False
         if not litellm_model:
-            _gemini_model_name = os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview').strip()
-            _anthropic_model_name = os.getenv('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022').strip()
-            _openai_model_name = os.getenv('OPENAI_MODEL', 'gpt-4o-mini').strip()
+            _gemini_model_name = get_env_stripped('GEMINI_MODEL', 'gemini-3-flash-preview')
+            _anthropic_model_name = get_env_stripped('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022')
+            _openai_model_name = get_env_stripped('OPENAI_MODEL', 'gpt-4o-mini')
             if gemini_api_keys:
                 litellm_model = f'gemini/{_gemini_model_name}'
             elif anthropic_api_keys:
@@ -1112,10 +1138,14 @@ class Config:
         # LITELLM_FALLBACK_MODELS: comma-separated list of fallback models
         _fallback_str = os.getenv('LITELLM_FALLBACK_MODELS', '')
         if _fallback_str.strip():
-            litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
+            litellm_fallback_models = [
+                m.strip()
+                for m in _fallback_str.split(',')
+                if m.strip() and not is_incomplete_litellm_model(m.strip())
+            ]
         else:
             # Backward compat: use gemini_model_fallback when primary is gemini
-            _gemini_fallback = os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash').strip()
+            _gemini_fallback = get_env_stripped('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash')
             if litellm_model.startswith('gemini/') and _gemini_fallback:
                 _fb = f'gemini/{_gemini_fallback}' if '/' not in _gemini_fallback else _gemini_fallback
                 litellm_fallback_models = [_fb]
@@ -1296,14 +1326,14 @@ class Config:
             openai_api_keys=openai_api_keys,
             deepseek_api_keys=deepseek_api_keys,
             gemini_api_key=os.getenv('GEMINI_API_KEY'),
-            gemini_model=os.getenv('GEMINI_MODEL', 'gemini-3-flash-preview'),
-            gemini_model_fallback=os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash'),
+            gemini_model=get_env_stripped('GEMINI_MODEL', 'gemini-3-flash-preview'),
+            gemini_model_fallback=get_env_stripped('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash'),
             gemini_temperature=parse_env_float(os.getenv('GEMINI_TEMPERATURE'), 0.7, field_name='GEMINI_TEMPERATURE'),
             gemini_request_delay=parse_env_float(os.getenv('GEMINI_REQUEST_DELAY'), 2.0, field_name='GEMINI_REQUEST_DELAY', minimum=0.0),
             gemini_max_retries=parse_env_int(os.getenv('GEMINI_MAX_RETRIES'), 5, field_name='GEMINI_MAX_RETRIES', minimum=0),
             gemini_retry_delay=parse_env_float(os.getenv('GEMINI_RETRY_DELAY'), 5.0, field_name='GEMINI_RETRY_DELAY', minimum=0.0),
             anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'),
-            anthropic_model=os.getenv('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022'),
+            anthropic_model=get_env_stripped('ANTHROPIC_MODEL', 'claude-3-5-sonnet-20241022'),
             anthropic_temperature=parse_env_float(os.getenv('ANTHROPIC_TEMPERATURE'), 0.7, field_name='ANTHROPIC_TEMPERATURE'),
             anthropic_max_tokens=parse_env_int(os.getenv('ANTHROPIC_MAX_TOKENS'), 8192, field_name='ANTHROPIC_MAX_TOKENS', minimum=1),
             # AIHubmix is the preferred OpenAI-compatible provider (one key, all models, no VPN required).
@@ -1316,7 +1346,7 @@ class Config:
             openai_base_url=os.getenv('OPENAI_BASE_URL') or (
                 'https://aihubmix.com/v1' if os.getenv('AIHUBMIX_KEY') else None
             ),  # noqa: E501
-            openai_model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+            openai_model=get_env_stripped('OPENAI_MODEL', 'gpt-4o-mini'),
             openai_vision_model=os.getenv('OPENAI_VISION_MODEL') or None,
             openai_temperature=parse_env_float(os.getenv('OPENAI_TEMPERATURE'), 0.7, field_name='OPENAI_TEMPERATURE'),
             # Vision model: VISION_MODEL > OPENAI_VISION_MODEL (alias) > default

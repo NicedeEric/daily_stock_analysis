@@ -1,12 +1,9 @@
-name: 每日股票分析_2
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+name: 每日股票分析
 
 on:
   # 定时触发 - 每天北京时间 18:00 (UTC 10:00)
   schedule:
-    - cron: '5 0 * * 1-5'     # 周一到周五，UTC 13:00 = 北京时间 21:00
+    - cron: '0 10 * * 1-5'     # 周一到周五，UTC 10:00 = 北京时间 18:00
   
   # 手动触发
   workflow_dispatch:
@@ -14,7 +11,7 @@ on:
       mode:
         description: '运行模式'
         required: true
-        default: 'stocks-only'
+        default: 'full'
         type: choice
         options:
           - full          # 完整分析（股票+大盘）
@@ -25,18 +22,10 @@ on:
         required: false
         default: false
         type: boolean
-      analysis_date:
-        description: '分析日期 YYYY-MM-DD（可选）'
-        required: false
-        default: ''
-      analysis_lookback_days:
-        description: '回补交易日天数（可选，默认1）'
-        required: false
-        default: '1'
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
-  group: stock-analysis-2
+  group: stock-analysis
   cancel-in-progress: false
 
 jobs:
@@ -86,8 +75,8 @@ jobs:
           LLM_CHANNELS: ${{ vars.LLM_CHANNELS || secrets.LLM_CHANNELS }}
 
           # Gemini AI（主选）
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY_2 || secrets.GEMINI_API_KEY }}
-          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS_2 || secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || secrets.GEMINI_MODEL || 'gemini-3-flash-preview' }}
           GEMINI_MODEL_FALLBACK: ${{ vars.GEMINI_MODEL_FALLBACK || secrets.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash' }}
           GEMINI_REQUEST_DELAY: '3.0'
@@ -129,8 +118,8 @@ jobs:
 
           LLM_GEMINI_PROTOCOL: ${{ vars.LLM_GEMINI_PROTOCOL || secrets.LLM_GEMINI_PROTOCOL }}
           LLM_GEMINI_BASE_URL: ${{ vars.LLM_GEMINI_BASE_URL || secrets.LLM_GEMINI_BASE_URL }}
-          LLM_GEMINI_API_KEY: ${{ secrets.LLM_GEMINI_API_KEY_2 || secrets.GEMINI_API_KEY_2 || secrets.LLM_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
-          LLM_GEMINI_API_KEYS: ${{ secrets.LLM_GEMINI_API_KEYS_2 || secrets.GEMINI_API_KEYS_2 || secrets.LLM_GEMINI_API_KEYS || secrets.GEMINI_API_KEYS }}
+          LLM_GEMINI_API_KEY: ${{ secrets.LLM_GEMINI_API_KEY }}
+          LLM_GEMINI_API_KEYS: ${{ secrets.LLM_GEMINI_API_KEYS }}
           LLM_GEMINI_MODELS: ${{ vars.LLM_GEMINI_MODELS || secrets.LLM_GEMINI_MODELS }}
           LLM_GEMINI_ENABLED: ${{ vars.LLM_GEMINI_ENABLED || secrets.LLM_GEMINI_ENABLED }}
           LLM_GEMINI_EXTRA_HEADERS: ${{ vars.LLM_GEMINI_EXTRA_HEADERS || secrets.LLM_GEMINI_EXTRA_HEADERS }}
@@ -205,7 +194,7 @@ jobs:
           # ==========================================
           ANSPIRE_API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }} 
           BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
-          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS_2 || secrets.TAVILY_API_KEYS }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
           SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
           MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
           BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
@@ -270,8 +259,8 @@ jobs:
           # ==========================================
           # 自选股配置
           # ==========================================
-          STOCK_LIST: ${{ vars.STOCK_LIST_2 || secrets.STOCK_LIST_2 || vars.STOCK_LIST || secrets.STOCK_LIST || '600519' }}
-          MARKET_REVIEW_REGION: us
+          STOCK_LIST: ${{ vars.STOCK_LIST || secrets.STOCK_LIST || '600519' }}
+          MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || secrets.MARKET_REVIEW_REGION || 'cn' }}
           
           # ==========================================
           # 运行配置 ⬅️ 新增！
@@ -286,8 +275,6 @@ jobs:
           # ==========================================
           # 系统配置
           # ==========================================
-          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
-          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
           LOG_LEVEL: INFO
           MAX_WORKERS: ${{ vars.MAX_WORKERS || secrets.MAX_WORKERS || '1' }}
           # 筹码分布：默认 false（云端接口不稳定）；需启用时在 Settings → Variables 添加 ENABLE_CHIP_DISTRIBUTION=true
@@ -370,29 +357,21 @@ jobs:
             FORCE_RUN_ARG="--force-run"
             echo "⚡ 已启用强制运行模式（跳过交易日检查）"
           fi
-          ANALYSIS_DATE_ARG=""
-          if [ -n "${{ github.event.inputs.analysis_date }}" ]; then
-            ANALYSIS_DATE_ARG="--analysis-date ${{ github.event.inputs.analysis_date }}"
-          fi
-          ANALYSIS_LOOKBACK_ARG=""
-          if [ -n "${{ github.event.inputs.analysis_lookback_days }}" ]; then
-            ANALYSIS_LOOKBACK_ARG="--analysis-lookback-days ${{ github.event.inputs.analysis_lookback_days }}"
-          fi
 
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
-            python main.py --market-review $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+            python main.py --market-review $FORCE_RUN_ARG
           elif [ "$MODE" = "stocks-only" ]; then
-            python main.py --no-market-review $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+            python main.py --no-market-review $FORCE_RUN_ARG
           else
-            python main.py $FORCE_RUN_ARG $ANALYSIS_DATE_ARG $ANALYSIS_LOOKBACK_ARG
+            python main.py $FORCE_RUN_ARG
           fi
       
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: analysis-reports-2-${{ github.run_number }}
+          name: analysis-reports-${{ github.run_number }}
           path: |
             reports/
             logs/
