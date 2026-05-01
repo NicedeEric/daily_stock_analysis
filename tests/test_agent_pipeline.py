@@ -454,6 +454,8 @@ class TestAgentResultConversion(unittest.TestCase):
         self.assertEqual(result.decision_type, "hold")
         self.assertIn("agent:gemini", result.data_sources)
         self.assertIsNotNone(result.dashboard)
+        self.assertIn("decision_engine", result.dashboard)
+        self.assertEqual(result.dashboard["decision_engine"]["final_decision"], "hold")
 
     def test_convert_failed_dashboard(self):
         """Failed AgentResult should produce a minimal AnalysisResult."""
@@ -478,6 +480,7 @@ class TestAgentResultConversion(unittest.TestCase):
         self.assertEqual(result.sentiment_score, 50)
         self.assertEqual(result.operation_advice, "观望")
         self.assertIn("Max steps exceeded", result.error_message)
+        self.assertIsNone(result.raw_response)
 
     def test_convert_invalid_dashboard_preserves_local_trend_result(self):
         """Invalid Agent dashboard should not erase already-computed trend data."""
@@ -516,6 +519,11 @@ class TestAgentResultConversion(unittest.TestCase):
         self.assertEqual(result.operation_advice, "买入")
         self.assertEqual(result.decision_type, "buy")
         self.assertIn("trend:fallback", result.data_sources)
+        pipeline.db.save_analysis_failure_audit.assert_called_once()
+        audit_kwargs = pipeline.db.save_analysis_failure_audit.call_args.kwargs
+        self.assertEqual(audit_kwargs["failure_type"], "trend_fallback_used")
+        self.assertTrue(audit_kwargs["used_fallback"])
+        self.assertIn("LLM returned text", audit_kwargs["raw_response"])
 
     def test_convert_invalid_dashboard_normalizes_strong_trend_decision_type(self):
         """Fallback preserves strong advice text while keeping stable decision_type values."""
@@ -556,6 +564,54 @@ class TestAgentResultConversion(unittest.TestCase):
 
                 self.assertEqual(result.operation_advice, expected_advice)
                 self.assertEqual(result.decision_type, expected_decision)
+
+    def test_convert_success_dashboard_bearish_rule_overrides_buy_signal(self):
+        """Bearish rule layer should stop the final result from blindly buying."""
+        pipeline = self._make_pipeline()
+
+        from src.agent.executor import AgentResult
+        from src.enums import ReportType
+        from src.stock_analyzer import BuySignal, TrendAnalysisResult, TrendStatus
+
+        dashboard = {
+            "stock_name": "贵州茅台",
+            "sentiment_score": 86,
+            "trend_prediction": "看多",
+            "operation_advice": "买入",
+            "decision_type": "buy",
+            "dashboard": {"core_conclusion": {"one_sentence": "LLM says buy"}},
+            "analysis_summary": "Testing conflict handling",
+        }
+        agent_result = AgentResult(
+            success=True,
+            content=json.dumps(dashboard),
+            dashboard=dashboard,
+            provider="gemini",
+        )
+        trend_result = TrendAnalysisResult(
+            code="600519",
+            trend_status=TrendStatus.BEAR,
+            buy_signal=BuySignal.SELL,
+            signal_score=28,
+        )
+
+        result = pipeline._agent_result_to_analysis_result(
+            agent_result,
+            "600519",
+            "贵州茅台",
+            ReportType.SIMPLE,
+            "q-conflict",
+            trend_result=trend_result,
+        )
+
+        self.assertEqual(result.decision_type, "sell")
+        self.assertEqual(result.sentiment_score, 45)
+        self.assertEqual(result.operation_advice, "减仓")
+        self.assertEqual(result.dashboard["decision_engine"]["rule_decision"], "sell")
+        self.assertIn(
+            "llm_buy_overridden_to_sell",
+            result.dashboard["decision_engine"]["adjustments"],
+        )
 
     def test_convert_uses_dashboard_stock_name_when_input_is_placeholder(self):
         """When input name is placeholder-like, prefer dashboard stock_name."""
@@ -606,6 +662,57 @@ class TestAgentResultConversion(unittest.TestCase):
             agent_result, "600519", "贵州茅台", ReportType.SIMPLE, "q-valid"
         )
         self.assertEqual(result.name, "贵州茅台")
+
+    def test_convert_failed_dashboard_persists_agent_execution_audit(self):
+        """Failed agent execution should emit a structured failure audit."""
+        pipeline = self._make_pipeline()
+
+        from src.agent.executor import AgentResult
+        from src.enums import ReportType
+
+        agent_result = AgentResult(
+            success=False,
+            content="",
+            dashboard=None,
+            error="Max steps exceeded",
+            provider="gemini",
+        )
+
+        pipeline._agent_result_to_analysis_result(
+            agent_result, "600519", "贵州茅台", ReportType.SIMPLE, "q-audit-failed"
+        )
+
+        pipeline.db.save_analysis_failure_audit.assert_called_once()
+        audit_kwargs = pipeline.db.save_analysis_failure_audit.call_args.kwargs
+        self.assertEqual(audit_kwargs["stage"], "agent_result")
+        self.assertEqual(audit_kwargs["status"], "failed")
+        self.assertEqual(audit_kwargs["failure_type"], "agent_execution_failed")
+        self.assertEqual(audit_kwargs["provider"], "gemini")
+
+    def test_classify_audit_failure_type_marks_agent_invalid_dashboard(self):
+        """Agent dashboard validation failures should be labeled explicitly."""
+        pipeline = self._make_pipeline()
+
+        from src.analyzer import AnalysisResult
+
+        result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=50,
+            trend_prediction="未知",
+            operation_advice="观望",
+            success=False,
+            error_message="Agent failed to generate a valid decision dashboard",
+            data_sources="agent:gemini",
+        )
+
+        failure_type = pipeline._classify_audit_failure_type(
+            result=result,
+            stage="agent_result",
+            history_save_failed=False,
+        )
+
+        self.assertEqual(failure_type, "agent_invalid_dashboard")
 
 
 # ============================================================

@@ -170,6 +170,56 @@ class AnalysisHistoryTestCase(unittest.TestCase):
             payload = json.loads(row.raw_result or "{}")
             self.assertEqual(payload.get("model_used"), "gemini/gemini-2.0-flash")
 
+    def test_save_analysis_history_persists_structured_signal_fields(self) -> None:
+        """Decision-engine fields should be persisted as first-class history columns."""
+        result = self._build_result()
+        result.decision_type = "buy"
+        result.prompt_version = "result_prompt_v1"
+        result.dashboard = {
+            "prompt_version": "dashboard_prompt_v2",
+            "decision_engine": {
+                "final_score": 83,
+                "final_decision": "buy",
+                "rule_score": 76,
+                "llm_score": 91,
+                "engine_version": "decision_engine_v1",
+            }
+        }
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="query_structured_signal_001",
+            report_type="simple",
+            news_content="结构化信号测试",
+            context_snapshot=None,
+            save_snapshot=False
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(
+                AnalysisHistory.query_id == "query_structured_signal_001"
+            ).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            self.assertEqual(row.final_score, 83)
+            self.assertEqual(row.final_decision, "buy")
+            self.assertEqual(row.rule_score, 76)
+            self.assertEqual(row.llm_score, 91)
+            self.assertEqual(row.signal_version, "decision_engine_v1")
+            self.assertEqual(row.prompt_version, "dashboard_prompt_v2")
+            record_id = row.id
+
+        service = HistoryService(self.db)
+        detail = service.get_history_detail_by_id(record_id)
+        self.assertIsNotNone(detail)
+        self.assertEqual(detail.get("final_score"), 83)
+        self.assertEqual(detail.get("final_decision"), "buy")
+        self.assertEqual(detail.get("rule_score"), 76)
+        self.assertEqual(detail.get("llm_score"), 91)
+        self.assertEqual(detail.get("signal_version"), "decision_engine_v1")
+        self.assertEqual(detail.get("prompt_version"), "dashboard_prompt_v2")
+
     def test_history_detail_hides_placeholder_model_used(self) -> None:
         """Placeholder model values should be normalized to None in detail response."""
         result = self._build_result()

@@ -42,6 +42,7 @@ from sqlalchemy import (
     desc,
     event,
     func,
+    inspect,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import (
@@ -49,6 +50,7 @@ from sqlalchemy.orm import (
     sessionmaker,
     Session,
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.config import get_config
@@ -232,6 +234,12 @@ class AnalysisHistory(Base):
     operation_advice = Column(String(20))
     trend_prediction = Column(String(50))
     analysis_summary = Column(Text)
+    final_score = Column(Integer)
+    final_decision = Column(String(16), index=True)
+    rule_score = Column(Integer)
+    llm_score = Column(Integer)
+    signal_version = Column(String(32), index=True)
+    prompt_version = Column(String(64))
 
     # 详细数据
     raw_result = Column(Text)
@@ -262,6 +270,12 @@ class AnalysisHistory(Base):
             'operation_advice': self.operation_advice,
             'trend_prediction': self.trend_prediction,
             'analysis_summary': self.analysis_summary,
+            'final_score': self.final_score,
+            'final_decision': self.final_decision,
+            'rule_score': self.rule_score,
+            'llm_score': self.llm_score,
+            'signal_version': self.signal_version,
+            'prompt_version': self.prompt_version,
             'raw_result': self.raw_result,
             'news_content': self.news_content,
             'context_snapshot': self.context_snapshot,
@@ -269,6 +283,53 @@ class AnalysisHistory(Base):
             'secondary_buy': self.secondary_buy,
             'stop_loss': self.stop_loss,
             'take_profit': self.take_profit,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AnalysisFailureAudit(Base):
+    """Structured audit rows for failed or degraded analysis runs."""
+
+    __tablename__ = 'analysis_failure_audit'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    query_id = Column(String(64), index=True)
+    code = Column(String(10), nullable=False, index=True)
+    name = Column(String(50))
+    report_type = Column(String(16), index=True)
+    stage = Column(String(32), nullable=False, index=True)
+    status = Column(String(16), nullable=False, index=True)  # failed / degraded
+    failure_type = Column(String(64), nullable=False, index=True)
+    used_fallback = Column(Boolean, nullable=False, default=False, index=True)
+    model_used = Column(String(128))
+    provider = Column(String(64))
+    data_sources = Column(String(255))
+    error_message = Column(Text)
+    raw_response = Column(Text)
+    detail_payload = Column(Text)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+
+    __table_args__ = (
+        Index('ix_failure_audit_code_time', 'code', 'created_at'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'query_id': self.query_id,
+            'code': self.code,
+            'name': self.name,
+            'report_type': self.report_type,
+            'stage': self.stage,
+            'status': self.status,
+            'failure_type': self.failure_type,
+            'used_fallback': bool(self.used_fallback),
+            'model_used': self.model_used,
+            'provider': self.provider,
+            'data_sources': self.data_sources,
+            'error_message': self.error_message,
+            'raw_response': self.raw_response,
+            'detail_payload': self.detail_payload,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -636,6 +697,22 @@ class DatabaseManager:
     
     _instance: Optional['DatabaseManager'] = None
     _initialized: bool = False
+    _POST_CREATE_MIGRATIONS: Dict[str, Dict[str, str]] = {
+        "analysis_history": {
+            "final_score": "INTEGER",
+            "final_decision": "VARCHAR(16)",
+            "rule_score": "INTEGER",
+            "llm_score": "INTEGER",
+            "signal_version": "VARCHAR(32)",
+            "prompt_version": "VARCHAR(64)",
+        },
+    }
+    _POST_CREATE_INDEXES: Dict[str, List[str]] = {
+        "analysis_history": [
+            "CREATE INDEX IF NOT EXISTS ix_analysis_history_final_decision ON analysis_history (final_decision)",
+            "CREATE INDEX IF NOT EXISTS ix_analysis_history_signal_version ON analysis_history (signal_version)",
+        ],
+    }
     
     def __new__(cls, *args, **kwargs):
         """单例模式实现"""
@@ -672,6 +749,11 @@ class DatabaseManager:
             engine_kwargs["connect_args"] = {
                 "timeout": self._sqlite_busy_timeout_ms / 1000,
             }
+        elif self._should_use_null_pool(config):
+            engine_kwargs["poolclass"] = NullPool
+            engine_kwargs["connect_args"] = self._build_postgres_connect_args()
+        elif self._is_supabase_url():
+            engine_kwargs["connect_args"] = self._build_postgres_connect_args()
 
         # 创建数据库引擎
         self._engine = create_engine(
@@ -691,6 +773,7 @@ class DatabaseManager:
         
         # 创建所有表
         Base.metadata.create_all(self._engine)
+        self._run_post_create_migrations()
 
         self._initialized = True
         logger.info(f"数据库初始化完成: {db_url}")
@@ -751,6 +834,69 @@ class DatabaseManager:
     def _is_file_sqlite_database(self) -> bool:
         database = (self._engine.url.database or "").strip()
         return bool(database) and database.lower() != ":memory:"
+
+    def _is_supabase_url(self) -> bool:
+        return "supabase.com" in str(self._db_url).lower()
+
+    def _build_postgres_connect_args(self) -> Dict[str, Any]:
+        connect_args: Dict[str, Any] = {}
+        db_url = str(self._db_url).lower()
+        if "supabase.com" in db_url:
+            connect_args["sslmode"] = "require"
+        if self._is_supabase_transaction_pooler():
+            # Supabase documents that transaction pool mode does not support prepared statements.
+            connect_args["prepare_threshold"] = None
+        return connect_args
+
+    def _is_supabase_transaction_pooler(self) -> bool:
+        db_url = str(self._db_url).lower()
+        return "supabase.com" in db_url and ":6543" in db_url
+
+    def _should_use_null_pool(self, config: Any) -> bool:
+        if str(self._db_url).startswith("sqlite:"):
+            return False
+
+        pool_mode = str(getattr(config, "database_pool_mode", "auto") or "auto").strip().lower()
+        if pool_mode == "nullpool":
+            return True
+        if pool_mode == "queuepool":
+            return False
+
+        # GitHub Actions + Supabase transaction pooler is a short-lived job pattern.
+        return self._is_supabase_transaction_pooler()
+
+    def _run_post_create_migrations(self) -> None:
+        """Best-effort additive schema migrations for lightweight deployments."""
+        inspector = inspect(self._engine)
+        for table_name, columns in self._POST_CREATE_MIGRATIONS.items():
+            try:
+                existing_columns = {
+                    column["name"]
+                    for column in inspector.get_columns(table_name)
+                }
+            except Exception as exc:
+                logger.warning("读取表结构失败，跳过迁移: %s (%s)", table_name, exc)
+                continue
+
+            missing_columns = {
+                column_name: ddl
+                for column_name, ddl in columns.items()
+                if column_name not in existing_columns
+            }
+            if not missing_columns:
+                continue
+
+            with self._engine.begin() as connection:
+                for column_name, ddl in missing_columns.items():
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"
+                    )
+                    logger.info("数据库迁移: %s 新增列 %s", table_name, column_name)
+
+        for statements in self._POST_CREATE_INDEXES.values():
+            with self._engine.begin() as connection:
+                for statement in statements:
+                    connection.exec_driver_sql(statement)
 
     def _run_write_transaction(
         self,
@@ -1188,6 +1334,7 @@ class DatabaseManager:
 
         sniper_points = self._extract_sniper_points(result)
         raw_result = self._build_raw_result(result)
+        structured_signal = self._extract_structured_signal_fields(result, raw_result)
         context_text = None
         if save_snapshot and context_snapshot is not None:
             context_text = self._safe_json_dumps(context_snapshot)
@@ -1204,6 +1351,12 @@ class DatabaseManager:
                         operation_advice=result.operation_advice,
                         trend_prediction=result.trend_prediction,
                         analysis_summary=result.analysis_summary,
+                        final_score=structured_signal.get("final_score"),
+                        final_decision=structured_signal.get("final_decision"),
+                        rule_score=structured_signal.get("rule_score"),
+                        llm_score=structured_signal.get("llm_score"),
+                        signal_version=structured_signal.get("signal_version"),
+                        prompt_version=structured_signal.get("prompt_version"),
                         raw_result=self._safe_json_dumps(raw_result),
                         news_content=news_content,
                         context_snapshot=context_text,
@@ -1222,6 +1375,88 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"保存分析历史失败: {e}")
             return 0
+
+    def save_analysis_failure_audit(
+        self,
+        *,
+        query_id: Optional[str],
+        code: str,
+        name: Optional[str],
+        report_type: Optional[str],
+        stage: str,
+        status: str,
+        failure_type: str,
+        used_fallback: bool = False,
+        model_used: Optional[str] = None,
+        provider: Optional[str] = None,
+        data_sources: Optional[str] = None,
+        error_message: Optional[str] = None,
+        raw_response: Optional[str] = None,
+        detail_payload: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Persist one structured failed/degraded analysis audit row."""
+        if not code or not stage or not status or not failure_type:
+            return 0
+
+        try:
+            def _write(session: Session) -> int:
+                session.add(
+                    AnalysisFailureAudit(
+                        query_id=query_id,
+                        code=code,
+                        name=name,
+                        report_type=report_type,
+                        stage=stage,
+                        status=status,
+                        failure_type=failure_type,
+                        used_fallback=bool(used_fallback),
+                        model_used=model_used,
+                        provider=provider,
+                        data_sources=data_sources,
+                        error_message=error_message,
+                        raw_response=raw_response,
+                        detail_payload=self._safe_json_dumps(detail_payload or {}),
+                        created_at=datetime.now(),
+                    )
+                )
+                return 1
+
+            return self._run_write_transaction(
+                f"save_analysis_failure_audit[{code}:{failure_type}]",
+                _write,
+            )
+        except Exception as e:
+            logger.warning("淇濆瓨鍒嗘瀽澶辫触瀹¤璁板綍澶辫触: %s", e)
+            return 0
+
+    def get_analysis_failure_audits(
+        self,
+        *,
+        code: Optional[str] = None,
+        query_id: Optional[str] = None,
+        days: int = 30,
+        limit: int = 100,
+        failure_type: Optional[str] = None,
+    ) -> List[AnalysisFailureAudit]:
+        """Return recent analysis failure/degraded audit rows."""
+        cutoff_date = datetime.now() - timedelta(days=days)
+
+        with self.get_session() as session:
+            conditions = [AnalysisFailureAudit.created_at >= cutoff_date]
+            if code:
+                conditions.append(AnalysisFailureAudit.code == code)
+            if query_id:
+                conditions.append(AnalysisFailureAudit.query_id == query_id)
+            if failure_type:
+                conditions.append(AnalysisFailureAudit.failure_type == failure_type)
+
+            rows = session.execute(
+                select(AnalysisFailureAudit)
+                .where(and_(*conditions))
+                .order_by(desc(AnalysisFailureAudit.created_at))
+                .limit(limit)
+            ).scalars().all()
+            return list(rows)
 
     def get_analysis_history(
         self,
@@ -1712,6 +1947,53 @@ class DatabaseManager:
             'raw_response': getattr(result, 'raw_response', None),
         })
         return data
+
+    @staticmethod
+    def _extract_structured_signal_fields(result: Any, raw_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract first-class structured signal fields for persistence."""
+        dashboard = raw_result.get("dashboard") if isinstance(raw_result.get("dashboard"), dict) else {}
+        decision_engine = dashboard.get("decision_engine") if isinstance(dashboard.get("decision_engine"), dict) else {}
+
+        def _safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return default
+
+        final_score = _safe_int(
+            decision_engine.get("final_score"),
+            _safe_int(getattr(result, "sentiment_score", None), 50),
+        )
+        final_decision = str(
+            decision_engine.get("final_decision")
+            or getattr(result, "decision_type", None)
+            or "hold"
+        ).strip().lower()
+        rule_score = _safe_int(decision_engine.get("rule_score"))
+        llm_score = _safe_int(decision_engine.get("llm_score"))
+        signal_version = str(
+            decision_engine.get("engine_version")
+            or dashboard.get("signal_version")
+            or raw_result.get("signal_version")
+            or "legacy_v0"
+        ).strip()
+        prompt_version_raw = (
+            dashboard.get("prompt_version")
+            or raw_result.get("prompt_version")
+            or getattr(result, "prompt_version", None)
+        )
+        prompt_version = str(prompt_version_raw).strip() if prompt_version_raw is not None else None
+        if prompt_version == "":
+            prompt_version = None
+
+        return {
+            "final_score": final_score,
+            "final_decision": final_decision,
+            "rule_score": rule_score,
+            "llm_score": llm_score,
+            "signal_version": signal_version,
+            "prompt_version": prompt_version,
+        }
 
     @staticmethod
     def _parse_sniper_value(value: Any) -> Optional[float]:

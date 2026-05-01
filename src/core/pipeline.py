@@ -36,6 +36,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.search_service import SearchService
+from src.services.decision_engine import StockDecisionEngine
 from src.services.social_sentiment_service import SocialSentimentService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
@@ -98,6 +99,7 @@ class StockAnalysisPipeline:
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
+        self.decision_engine = StockDecisionEngine()
         self.analyzer = GeminiAnalyzer(config=self.config)
         self.notifier = NotificationService(source_message=source_message)
         self._single_stock_notify_lock = threading.Lock()
@@ -492,8 +494,17 @@ class StockAnalysisPipeline:
             # Step 7.7: price_position fallback
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
+                self._apply_decision_engine(
+                    result,
+                    trend_result,
+                    result.report_language,
+                    fundamental_context=fundamental_context,
+                    news_context=news_context,
+                )
 
             # Step 8: 保存分析历史记录
+            history_save_failed = False
+            history_save_error: Optional[str] = None
             if result and result.success:
                 try:
                     self._emit_progress(97, f"{stock_name}：正在保存分析报告")
@@ -503,7 +514,7 @@ class StockAnalysisPipeline:
                         realtime_quote=realtime_quote,
                         chip_data=chip_data
                     )
-                    self.db.save_analysis_history(
+                    history_saved = self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
                         report_type=report_type.value,
@@ -511,14 +522,37 @@ class StockAnalysisPipeline:
                         context_snapshot=context_snapshot,
                         save_snapshot=self.save_context_snapshot
                     )
+                    history_save_failed = history_saved != 1
+                    if history_save_failed:
+                        history_save_error = "analysis_history_save_returned_0"
                 except Exception as e:
+                    history_save_failed = True
+                    history_save_error = str(e)
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
 
+            self._persist_analysis_audit(
+                result=result,
+                query_id=query_id,
+                code=code,
+                stock_name=stock_name,
+                report_type=report_type.value,
+                stage="analysis",
+                history_save_failed=history_save_failed,
+                history_save_error=history_save_error,
+            )
             return result
 
         except Exception as e:
             logger.error(f"{stock_name}({code}) 分析失败: {e}")
             logger.exception(f"{stock_name}({code}) 详细错误信息:")
+            self._persist_runtime_exception_audit(
+                query_id=query_id,
+                code=code,
+                stock_name=stock_name,
+                report_type=report_type.value,
+                stage="analysis",
+                error=e,
+            )
             return None
     
     def _enhance_context(
@@ -829,6 +863,8 @@ class StockAnalysisPipeline:
                 report_type,
                 query_id,
                 trend_result=trend_result,
+                fundamental_context=fundamental_context,
+                news_context=initial_context.get("news_context"),
             )
             if result:
                 result.query_id = query_id
@@ -852,6 +888,8 @@ class StockAnalysisPipeline:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
 
             resolved_stock_name = result.name if result and result.name else stock_name
+            history_save_failed = False
+            history_save_error: Optional[str] = None
 
             # 保存新闻情报到数据库（Agent 工具结果仅用于 LLM 上下文，未持久化，Fixes #396）
             # 使用 search_stock_news（与 Agent 工具调用逻辑一致），仅 1 次 API 调用，无额外延迟
@@ -880,7 +918,7 @@ class StockAnalysisPipeline:
             if result and result.success:
                 try:
                     initial_context["stock_name"] = resolved_stock_name
-                    self.db.save_analysis_history(
+                    history_saved = self.db.save_analysis_history(
                         result=result,
                         query_id=query_id,
                         report_type=report_type.value,
@@ -888,14 +926,37 @@ class StockAnalysisPipeline:
                         context_snapshot=initial_context,
                         save_snapshot=self.save_context_snapshot
                     )
+                    history_save_failed = history_saved != 1
+                    if history_save_failed:
+                        history_save_error = "analysis_history_save_returned_0"
                 except Exception as e:
+                    history_save_failed = True
+                    history_save_error = str(e)
                     logger.warning(f"[{code}] 保存 Agent 分析历史失败: {e}")
 
+            self._persist_analysis_audit(
+                result=result,
+                query_id=query_id,
+                code=code,
+                stock_name=resolved_stock_name,
+                report_type=report_type.value,
+                stage="agent",
+                history_save_failed=history_save_failed,
+                history_save_error=history_save_error,
+            )
             return result
 
         except Exception as e:
             logger.error(f"[{code}] Agent 分析失败: {e}")
             logger.exception(f"[{code}] Agent 详细错误信息:")
+            self._persist_runtime_exception_audit(
+                query_id=query_id,
+                code=code,
+                stock_name=stock_name,
+                report_type=report_type.value,
+                stage="agent",
+                error=e,
+            )
             return None
 
     def _agent_result_to_analysis_result(
@@ -906,6 +967,8 @@ class StockAnalysisPipeline:
         report_type: ReportType,
         query_id: str,
         trend_result: Optional[TrendAnalysisResult] = None,
+        fundamental_context: Optional[Dict[str, Any]] = None,
+        news_context: Optional[str] = None,
     ) -> AnalysisResult:
         """
         将 AgentResult 转换为 AnalysisResult。
@@ -921,6 +984,7 @@ class StockAnalysisPipeline:
             report_language=report_language,
             success=agent_result.success,
             error_message=agent_result.error or None,
+            raw_response=agent_result.content or None,
             data_sources=f"agent:{agent_result.provider}",
             model_used=agent_result.model or None,
         )
@@ -969,6 +1033,21 @@ class StockAnalysisPipeline:
             if not result.error_message:
                 result.error_message = "Agent failed to generate a valid decision dashboard" if report_language == "en" else "Agent 未能生成有效的决策仪表盘"
 
+        self._apply_decision_engine(
+            result,
+            trend_result,
+            report_language,
+            fundamental_context=fundamental_context,
+            news_context=news_context,
+        )
+        self._persist_analysis_audit(
+            result=result,
+            query_id=query_id,
+            code=code,
+            stock_name=result.name or stock_name,
+            report_type=report_type.value,
+            stage="agent_result",
+        )
         return result
 
     @staticmethod
@@ -1015,6 +1094,172 @@ class StockAnalysisPipeline:
         result.decision_type = signal_to_decision.get(signal_name, result.decision_type or "hold")
         result.decision_type = normalize_decision_signal(result.decision_type)
         result.data_sources = f"{result.data_sources},trend:fallback" if result.data_sources else "trend:fallback"
+
+    def _apply_decision_engine(
+        self,
+        result: AnalysisResult,
+        trend_result: Optional[TrendAnalysisResult],
+        report_language: str,
+        *,
+        fundamental_context: Optional[Dict[str, Any]] = None,
+        news_context: Optional[str] = None,
+    ) -> None:
+        engine = getattr(self, "decision_engine", None)
+        if engine is None:
+            engine = StockDecisionEngine()
+            self.decision_engine = engine
+        engine.apply(
+            result,
+            trend_result,
+            report_language,
+            fundamental_context=fundamental_context,
+            news_context=news_context,
+        )
+
+    def _persist_analysis_audit(
+        self,
+        *,
+        result: Optional[AnalysisResult],
+        query_id: str,
+        code: str,
+        stock_name: str,
+        report_type: str,
+        stage: str,
+        history_save_failed: bool = False,
+        history_save_error: Optional[str] = None,
+    ) -> None:
+        if result is None:
+            return
+
+        data_sources = str(getattr(result, "data_sources", "") or "")
+        used_fallback = "trend:fallback" in data_sources
+        failure_type = self._classify_audit_failure_type(
+            result=result,
+            stage=stage,
+            history_save_failed=history_save_failed,
+        )
+        if not failure_type:
+            return
+
+        status = "failed" if not getattr(result, "success", False) else "degraded"
+        error_message = history_save_error or getattr(result, "error_message", None)
+        detail_payload = self._build_audit_detail_payload(result, history_save_failed=history_save_failed)
+
+        try:
+            self.db.save_analysis_failure_audit(
+                query_id=query_id,
+                code=code,
+                name=getattr(result, "name", None) or stock_name,
+                report_type=report_type,
+                stage=stage,
+                status=status,
+                failure_type=failure_type,
+                used_fallback=used_fallback,
+                model_used=getattr(result, "model_used", None),
+                provider=self._extract_audit_provider(result),
+                data_sources=data_sources,
+                error_message=error_message,
+                raw_response=getattr(result, "raw_response", None),
+                detail_payload=detail_payload,
+            )
+        except Exception as exc:
+            logger.debug("[%s] failure audit persistence skipped: %s", code, exc)
+
+    def _persist_runtime_exception_audit(
+        self,
+        *,
+        query_id: str,
+        code: str,
+        stock_name: str,
+        report_type: str,
+        stage: str,
+        error: Exception,
+    ) -> None:
+        try:
+            self.db.save_analysis_failure_audit(
+                query_id=query_id,
+                code=code,
+                name=stock_name,
+                report_type=report_type,
+                stage=stage,
+                status="failed",
+                failure_type="pipeline_exception",
+                used_fallback=False,
+                model_used=None,
+                provider=None,
+                data_sources=None,
+                error_message=str(error),
+                raw_response=None,
+                detail_payload={"exception_type": error.__class__.__name__},
+            )
+        except Exception as exc:
+            logger.debug("[%s] runtime exception audit skipped: %s", code, exc)
+
+    def _classify_audit_failure_type(
+        self,
+        *,
+        result: AnalysisResult,
+        stage: str,
+        history_save_failed: bool,
+    ) -> Optional[str]:
+        if history_save_failed:
+            return "history_save_failed"
+
+        data_sources = str(getattr(result, "data_sources", "") or "")
+        if "trend:fallback" in data_sources:
+            return "trend_fallback_used"
+
+        if getattr(result, "success", False):
+            return None
+
+        error_text = str(getattr(result, "error_message", "") or "").lower()
+        raw_response = str(getattr(result, "raw_response", "") or "")
+
+        if "api key" in error_text and "not configured" in error_text:
+            return "llm_unavailable"
+        if "empty response" in error_text:
+            return "llm_empty_response"
+        if "timeout" in error_text or "timed out" in error_text:
+            return "llm_timeout"
+        if "not valid json" in error_text or "json" in error_text:
+            return "llm_parse_failed"
+        if stage.startswith("agent") and "valid decision dashboard" in error_text:
+            return "agent_invalid_dashboard"
+        if stage.startswith("agent"):
+            return "agent_execution_failed"
+        if raw_response.strip() and not getattr(result, "success", False):
+            return "llm_parse_failed"
+        return "analysis_failed"
+
+    @staticmethod
+    def _extract_audit_provider(result: AnalysisResult) -> Optional[str]:
+        data_sources = str(getattr(result, "data_sources", "") or "")
+        if ":" in data_sources:
+            first = data_sources.split(",", 1)[0]
+            provider = first.split(":", 1)[1].strip() if ":" in first else ""
+            if provider:
+                return provider
+        model_used = str(getattr(result, "model_used", "") or "")
+        if "/" in model_used:
+            return model_used.split("/", 1)[0]
+        return model_used or None
+
+    @staticmethod
+    def _build_audit_detail_payload(
+        result: AnalysisResult,
+        *,
+        history_save_failed: bool,
+    ) -> Dict[str, Any]:
+        dashboard = getattr(result, "dashboard", None)
+        decision_engine = dashboard.get("decision_engine") if isinstance(dashboard, dict) else None
+        return {
+            "success": bool(getattr(result, "success", False)),
+            "decision_type": getattr(result, "decision_type", None),
+            "sentiment_score": getattr(result, "sentiment_score", None),
+            "history_save_failed": bool(history_save_failed),
+            "adjustments": (decision_engine or {}).get("adjustments") if isinstance(decision_engine, dict) else [],
+            "signal_version": (decision_engine or {}).get("engine_version") if isinstance(decision_engine, dict) else None,
+        }
 
     @staticmethod
     def _is_placeholder_stock_name(name: str, code: str) -> bool:

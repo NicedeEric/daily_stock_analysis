@@ -787,7 +787,9 @@ class Config:
     prefetch_realtime_quotes: bool = True
 
     # === 数据库配置 ===
+    database_url: Optional[str] = None
     database_path: str = "./data/stock_analysis.db"
+    database_pool_mode: str = "auto"  # auto | nullpool | queuepool
     sqlite_wal_enabled: bool = True
     sqlite_busy_timeout_ms: int = 5000
     sqlite_write_retry_max: int = 3
@@ -1449,7 +1451,11 @@ class Config:
             ),
             md2img_engine=cls._parse_md2img_engine(os.getenv('MD2IMG_ENGINE', 'wkhtmltoimage')),
             prefetch_realtime_quotes=os.getenv('PREFETCH_REALTIME_QUOTES', 'true').lower() == 'true',
+            database_url=cls._normalize_database_url(
+                os.getenv('DATABASE_URL') or os.getenv('SUPABASE_DB_URL')
+            ),
             database_path=os.getenv('DATABASE_PATH', './data/stock_analysis.db'),
+            database_pool_mode=(os.getenv('DATABASE_POOL_MODE', 'auto').strip().lower() or 'auto'),
             sqlite_wal_enabled=os.getenv('SQLITE_WAL_ENABLED', 'true').lower() == 'true',
             sqlite_busy_timeout_ms=parse_env_int(
                 os.getenv('SQLITE_BUSY_TIMEOUT_MS'),
@@ -2456,9 +2462,28 @@ class Config:
         
         自动创建数据库目录（如果不存在）
         """
+        if self.database_url:
+            return self.database_url
         db_path = Path(self.database_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{db_path.absolute()}"
+
+    @staticmethod
+    def _normalize_database_url(value: Optional[str]) -> Optional[str]:
+        """Normalize managed Postgres connection strings for SQLAlchemy."""
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+
+        if normalized.startswith("postgres://"):
+            normalized = "postgresql://" + normalized[len("postgres://"):]
+
+        if normalized.startswith("postgresql://") and not normalized.startswith("postgresql+"):
+            normalized = "postgresql+psycopg://" + normalized[len("postgresql://"):]
+
+        return normalized
 
 
 # === 便捷的配置访问函数 ===

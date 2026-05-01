@@ -158,7 +158,22 @@ class AnalysisService:
                 "operation_advice": localize_operation_advice(result.operation_advice, report_language),
                 "trend_prediction": localize_trend_prediction(result.trend_prediction, report_language),
                 "sentiment_score": result.sentiment_score,
+                "decision_type": getattr(result, "decision_type", "hold"),
                 "sentiment_label": sentiment_label,
+            },
+            "signal": {
+                "final_score": getattr(result, "sentiment_score", None),
+                "final_decision": getattr(result, "decision_type", "hold"),
+                "rule_score": ((result.dashboard or {}).get("decision_engine") or {}).get("rule_score")
+                if getattr(result, "dashboard", None) else None,
+                "llm_score": ((result.dashboard or {}).get("decision_engine") or {}).get("llm_score")
+                if getattr(result, "dashboard", None) else None,
+                "signal_version": ((result.dashboard or {}).get("decision_engine") or {}).get("engine_version")
+                if getattr(result, "dashboard", None) else None,
+                "factor_scores": ((result.dashboard or {}).get("decision_engine") or {}).get("factor_scores")
+                if getattr(result, "dashboard", None) else None,
+                "factor_weights": ((result.dashboard or {}).get("decision_engine") or {}).get("factor_weights")
+                if getattr(result, "dashboard", None) else None,
             },
             "strategy": {
                 "ideal_buy": sniper_points.get("ideal_buy"),

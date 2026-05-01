@@ -2,6 +2,7 @@
 import unittest
 import sys
 import os
+import sqlite3
 import tempfile
 import threading
 from datetime import date
@@ -15,7 +16,7 @@ from sqlalchemy.sql import func
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.config import Config
-from src.storage import DatabaseManager, StockDaily
+from src.storage import AnalysisFailureAudit, DatabaseManager, StockDaily
 
 class TestStorage(unittest.TestCase):
     
@@ -133,6 +134,109 @@ class TestStorage(unittest.TestCase):
                     os.environ[key] = value
             temp_dir.cleanup()
 
+    def test_analysis_history_post_create_migration_adds_structured_signal_columns(self):
+        DatabaseManager.reset_instance()
+        temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(temp_dir.name, "legacy_analysis_history.db")
+
+        legacy_conn = sqlite3.connect(db_path)
+        try:
+            legacy_conn.executescript(
+                """
+                CREATE TABLE analysis_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query_id VARCHAR(64),
+                    code VARCHAR(10) NOT NULL,
+                    name VARCHAR(50),
+                    report_type VARCHAR(16),
+                    sentiment_score INTEGER,
+                    operation_advice VARCHAR(20),
+                    trend_prediction VARCHAR(50),
+                    analysis_summary TEXT,
+                    raw_result TEXT,
+                    news_content TEXT,
+                    context_snapshot TEXT,
+                    ideal_buy FLOAT,
+                    secondary_buy FLOAT,
+                    stop_loss FLOAT,
+                    take_profit FLOAT,
+                    created_at DATETIME
+                );
+                """
+            )
+            legacy_conn.commit()
+        finally:
+            legacy_conn.close()
+
+        try:
+            db = DatabaseManager(db_url=f"sqlite:///{db_path}")
+            with db.get_session() as session:
+                column_rows = session.connection().exec_driver_sql(
+                    "PRAGMA table_info(analysis_history)"
+                ).fetchall()
+                columns = {row[1] for row in column_rows}
+                index_rows = session.connection().exec_driver_sql(
+                    "PRAGMA index_list(analysis_history)"
+                ).fetchall()
+                indexes = {row[1] for row in index_rows}
+
+            self.assertTrue(
+                {
+                    "final_score",
+                    "final_decision",
+                    "rule_score",
+                    "llm_score",
+                    "signal_version",
+                    "prompt_version",
+                }.issubset(columns)
+            )
+            self.assertIn("ix_analysis_history_final_decision", indexes)
+            self.assertIn("ix_analysis_history_signal_version", indexes)
+        finally:
+            DatabaseManager.reset_instance()
+            temp_dir.cleanup()
+
+    def test_save_and_query_analysis_failure_audits(self):
+        DatabaseManager.reset_instance()
+        db = DatabaseManager(db_url="sqlite:///:memory:")
+
+        saved = db.save_analysis_failure_audit(
+            query_id="q-audit",
+            code="600519",
+            name="贵州茅台",
+            report_type="simple",
+            stage="agent",
+            status="degraded",
+            failure_type="trend_fallback_used",
+            used_fallback=True,
+            model_used="gemini/gemini-2.5-flash",
+            provider="gemini",
+            data_sources="agent:gemini,trend:fallback",
+            error_message="fallback used",
+            raw_response='{"note":"raw"}',
+            detail_payload={"signal_version": "decision_engine_v2"},
+        )
+
+        self.assertEqual(saved, 1)
+
+        rows = db.get_analysis_failure_audits(code="600519", limit=5)
+        self.assertEqual(len(rows), 1)
+        self.assertIsInstance(rows[0], AnalysisFailureAudit)
+        self.assertEqual(rows[0].query_id, "q-audit")
+        self.assertEqual(rows[0].failure_type, "trend_fallback_used")
+        self.assertTrue(rows[0].used_fallback)
+        self.assertEqual(rows[0].provider, "gemini")
+        self.assertIn("decision_engine_v2", rows[0].detail_payload)
+
+        filtered = db.get_analysis_failure_audits(
+            code="600519",
+            failure_type="trend_fallback_used",
+            limit=5,
+        )
+        self.assertEqual(len(filtered), 1)
+
+        DatabaseManager.reset_instance()
+
     def test_sqlite_write_transactions_begin_immediate(self):
         DatabaseManager.reset_instance()
         db = DatabaseManager(db_url="sqlite:///:memory:")
@@ -209,8 +313,8 @@ class TestStorage(unittest.TestCase):
 
             self.assertEqual(total, 1)
         finally:
-            temp_dir.cleanup()
             DatabaseManager.reset_instance()
+            temp_dir.cleanup()
 
 if __name__ == '__main__':
     unittest.main()

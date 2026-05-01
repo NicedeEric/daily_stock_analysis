@@ -121,7 +121,10 @@ class HistoryService:
                     "stock_name": record.name,
                     "report_type": record.report_type,
                     "sentiment_score": record.sentiment_score,
+                    "final_score": getattr(record, "final_score", None),
                     "operation_advice": record.operation_advice,
+                    "final_decision": getattr(record, "final_decision", None),
+                    "signal_version": getattr(record, "signal_version", None),
                     "created_at": record.created_at.isoformat() if record.created_at else None,
                 })
             
@@ -255,6 +258,11 @@ class HistoryService:
         Convert an AnalysisHistory ORM record to a detail response dict.
         """
         raw_result = parse_json_field(record.raw_result)
+        decision_engine = (
+            (raw_result or {}).get("dashboard", {}).get("decision_engine", {})
+            if isinstance((raw_result or {}).get("dashboard"), dict)
+            else {}
+        )
 
         model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
         model_used = normalize_model_used(model_used)
@@ -279,6 +287,15 @@ class HistoryService:
             "operation_advice": record.operation_advice,
             "trend_prediction": record.trend_prediction,
             "sentiment_score": record.sentiment_score,
+            "final_score": getattr(record, "final_score", None),
+            "final_decision": getattr(record, "final_decision", None),
+            "rule_score": getattr(record, "rule_score", None),
+            "llm_score": getattr(record, "llm_score", None),
+            "signal_version": getattr(record, "signal_version", None),
+            "prompt_version": getattr(record, "prompt_version", None),
+            "factor_scores": decision_engine.get("factor_scores") if isinstance(decision_engine, dict) else None,
+            "factor_weights": decision_engine.get("factor_weights") if isinstance(decision_engine, dict) else None,
+            "factor_notes": decision_engine.get("factor_notes") if isinstance(decision_engine, dict) else None,
             "sentiment_label": self._get_sentiment_label(record.sentiment_score or 50),
             "ideal_buy": sniper_points.get("ideal_buy"),
             "secondary_buy": sniper_points.get("secondary_buy"),

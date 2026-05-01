@@ -195,6 +195,52 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
         self.assertEqual(config.report_language, "en")
 
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_database_url_prefers_managed_postgres_over_sqlite_path(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "DATABASE_URL": "postgres://postgres.ovztjsmctpyjluxsfgec:secret@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+                "DATABASE_PATH": "./data/ignored.db",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertEqual(
+            config.database_url,
+            "postgresql+psycopg://postgres.ovztjsmctpyjluxsfgec:secret@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+        )
+        self.assertEqual(config.get_db_url(), config.database_url)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_database_url_falls_back_to_supabase_alias_and_normalizes_pool_mode(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SUPABASE_DB_URL": "postgresql://postgres.ovztjsmctpyjluxsfgec:secret@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+                "DATABASE_POOL_MODE": "NullPool",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertEqual(
+            config.database_url,
+            "postgresql+psycopg://postgres.ovztjsmctpyjluxsfgec:secret@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+        )
+        self.assertEqual(config.database_pool_mode, "nullpool")
+
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_runtime_mutable_keys_reload_from_updated_env_file_after_runtime_refresh(
         self,

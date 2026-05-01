@@ -160,6 +160,8 @@ jobs:
           # ==========================================
           # 系统配置
           # ==========================================
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
           LOG_LEVEL: INFO
           MAX_WORKERS: ${{ vars.MAX_WORKERS || secrets.MAX_WORKERS || '1' }}
           # GitHub Actions 环境建议关闭不稳定的数据源
