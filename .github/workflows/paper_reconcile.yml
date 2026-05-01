@@ -109,7 +109,6 @@ jobs:
           PY
 
       - name: Send reconcile result to Telegram
-        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -120,6 +119,13 @@ jobs:
           import urllib.request
           import urllib.parse
           from pathlib import Path
+
+          bot_token = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          chat_id = "${{ secrets.TELEGRAM_CHAT_ID }}"
+          thread_id = "${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}"
+          if not bot_token or not chat_id:
+              print("telegram_status=skipped (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)")
+              raise SystemExit(0)
 
           payload = json.loads(Path("data/reconcile_orders.json").read_text(encoding="utf-8"))
           summary = payload.get("summary") or {}
@@ -151,9 +157,6 @@ jobs:
           if len(text) > 3500:
               text = text[:3450] + "\n... truncated"
 
-          bot_token = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          chat_id = "${{ secrets.TELEGRAM_CHAT_ID }}"
-          thread_id = "${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}"
           url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
           data = {
