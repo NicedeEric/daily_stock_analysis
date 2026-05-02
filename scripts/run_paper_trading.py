@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sqlalchemy import and_, select
 
+from src.reports.paper_trade_notifications import build_paper_trading_message
 from src.services.paper_trading_service import PaperTradingService
 from src.storage import DatabaseManager, PaperStrategyDecision
 
@@ -57,30 +58,6 @@ def _dump_json(path: Path, payload: Dict[str, Any]) -> None:
 
 def _as_bool(value: str) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _build_notify_message(strategy: Dict[str, Any], result: Dict[str, Any]) -> str:
-    account = result.get("account_snapshot") or {}
-    run_date = result.get("run_date") or "-"
-    strategy_title = f"{strategy.get('strategy_name')}:{strategy.get('strategy_version')}"
-    total_equity = float(account.get("total_equity") or 0.0)
-    cash = float(account.get("total_cash") or 0.0)
-    market_value = float(account.get("total_market_value") or 0.0)
-    exposure = (market_value / total_equity * 100.0) if total_equity > 0 else 0.0
-    return "\n".join(
-        [
-            "Paper Trading Daily Update",
-            "",
-            "| Date | Strategy | Signals | Buy | Sell | Skip | Error | Equity | Cash | Exposure |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
-            (
-                f"| {run_date} | {strategy_title} | {int(result.get('signals') or 0)} | "
-                f"{int(result.get('planned_buys') or 0)} | {int(result.get('planned_sells') or 0)} | "
-                f"{int(result.get('skipped') or 0)} | {int(result.get('errors') or 0)} | "
-                f"{total_equity:.2f} | {cash:.2f} | {exposure:.1f}% |"
-            ),
-        ]
-    )
 
 
 def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -127,67 +104,6 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
     return items
 
 
-def _fmt_num(value: Any, ndigits: int = 2, default: str = "-") -> str:
-    if value is None:
-        return default
-    try:
-        return f"{float(value):.{ndigits}f}"
-    except (TypeError, ValueError):
-        return default
-
-
-def _format_decisions_block(decisions: list[Dict[str, Any]], max_rows: int = 18) -> str:
-    if not decisions:
-        return "Decisions: none"
-    rows = sorted(
-        decisions,
-        key=lambda x: (0 if x.get("action") in ("buy", "sell") else 1, str(x.get("code") or "")),
-    )
-    lines = [
-        "",
-        "| Action | Code | Score | Rule | Qty | Price | Notional | Reason |",
-        "|---|---|---:|---:|---:|---:|---:|---|",
-    ]
-    for idx, row in enumerate(rows):
-        if idx >= max_rows:
-            lines.append("| ... | ... | ... | ... | ... | ... | ... | truncated |")
-            break
-        reason = ",".join((row.get("reasons") or [])[:2]) or "-"
-        lines.append(
-            f"| {(row.get('action') or '-').upper()} | {row.get('code') or '-'} | "
-            f"{row.get('final_score', '-')} | {row.get('rule_score', '-')} | "
-            f"{_fmt_num(row.get('qty'),0)} | {_fmt_num(row.get('price'))} | {_fmt_num(row.get('notional'))} | {reason} |"
-        )
-    return "\n".join(lines)
-
-
-def _format_positions_block(result: Dict[str, Any], max_rows: int = 12) -> str:
-    account = result.get("account_snapshot") or {}
-    positions = account.get("positions") or []
-    if not positions:
-        return "\n\nPositions: none"
-
-    lines = [
-        "",
-        "| Code | Qty | Avg Cost | Last | PnL% | Weight |",
-        "|---|---:|---:|---:|---:|---:|",
-    ]
-    total_equity = float(account.get("total_equity") or 0.0)
-    for idx, p in enumerate(positions):
-        if idx >= max_rows:
-            lines.append("| ... | ... | ... | ... | ... | ... |")
-            break
-        qty = float(p.get("quantity") or 0.0)
-        avg_cost = float(p.get("avg_cost") or 0.0)
-        last = float(p.get("last_price") or 0.0)
-        weight = (float(p.get("market_value_base") or 0.0) / total_equity * 100.0) if total_equity > 0 else 0.0
-        pnl_pct = ((last - avg_cost) / avg_cost * 100.0) if avg_cost > 0 else 0.0
-        lines.append(
-            f"| {p.get('symbol') or '-'} | {qty:.0f} | {avg_cost:.2f} | {last:.2f} | {pnl_pct:.2f}% | {weight:.2f}% |"
-        )
-    return "\n".join(lines)
-
-
 def main() -> int:
     args = _build_parser().parse_args()
     service = PaperTradingService()
@@ -229,8 +145,7 @@ def main() -> int:
     if _as_bool(args.notify):
         from src.notification import NotificationService
         decisions = _fetch_decisions_for_run(strategy, result)
-        notify_message = _build_notify_message(strategy, result)
-        notify_message = f"{notify_message}{_format_decisions_block(decisions)}{_format_positions_block(result)}"
+        notify_message = build_paper_trading_message(strategy=strategy, result=result, decisions=decisions)
         if len(notify_message) > 3600:
             notify_message = notify_message[:3560] + "\n\n...truncated"
         ok = NotificationService().send_to_telegram(notify_message)
