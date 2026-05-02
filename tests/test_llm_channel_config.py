@@ -138,6 +138,19 @@ class LLMChannelConfigTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_llm_temperature_defaults_to_low_value_for_financial_analysis(self, _mock_parse_yaml, _mock_setup_env) -> None:
+        env = {
+            "GEMINI_API_KEY": "secret-key-value",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.litellm_model, "gemini/gemini-3-flash-preview")
+        self.assertAlmostEqual(config.llm_temperature, 0.1)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     @patch("src.config.logger.warning")
     def test_deepseek_key_defaults_to_legacy_chat_model_with_deprecation_warning(
         self,

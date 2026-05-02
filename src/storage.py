@@ -1414,33 +1414,31 @@ class DatabaseManager:
                     analysis_date=analysis_date,
                     analysis_close=analysis_close,
                 )
-                session.add(
-                    AnalysisHistory(
-                        query_id=query_id,
+                history_row = self._find_same_day_analysis_history(
+                    session=session,
+                    code=result.code,
+                    report_type=report_type,
+                    analysis_date=aligned_date,
+                )
+                if history_row is None:
+                    history_row = AnalysisHistory(
                         code=result.code,
-                        name=result.name,
                         report_type=report_type,
-                        sentiment_score=result.sentiment_score,
-                        operation_advice=result.operation_advice,
-                        trend_prediction=result.trend_prediction,
-                        analysis_summary=result.analysis_summary,
-                        final_score=structured_signal.get("final_score"),
-                        final_decision=structured_signal.get("final_decision"),
-                        rule_score=structured_signal.get("rule_score"),
-                        llm_score=structured_signal.get("llm_score"),
-                        signal_version=structured_signal.get("signal_version"),
-                        prompt_version=structured_signal.get("prompt_version"),
-                        raw_result=self._safe_json_dumps(raw_result),
-                        news_content=news_content,
-                          context_snapshot=context_text,
-                          ideal_buy=sniper_points.get("ideal_buy"),
-                          secondary_buy=sniper_points.get("secondary_buy"),
-                          stop_loss=sniper_points.get("stop_loss"),
-                          take_profit=sniper_points.get("take_profit"),
-                        analysis_date=aligned_date,
-                        analysis_close=aligned_close,
-                        created_at=datetime.now(),
                     )
+                    session.add(history_row)
+
+                self._populate_analysis_history_row(
+                    history_row,
+                    query_id=query_id,
+                    result=result,
+                    report_type=report_type,
+                    news_content=news_content,
+                    context_text=context_text,
+                    sniper_points=sniper_points,
+                    structured_signal=structured_signal,
+                    raw_result=raw_result,
+                    analysis_date=aligned_date,
+                    analysis_close=aligned_close,
                 )
                 return 1
             return self._run_write_transaction(
@@ -1450,6 +1448,72 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"保存分析历史失败: {e}")
             return 0
+
+    @staticmethod
+    def _populate_analysis_history_row(
+        row: AnalysisHistory,
+        *,
+        query_id: str,
+        result: Any,
+        report_type: str,
+        news_content: Optional[str],
+        context_text: Optional[str],
+        sniper_points: Dict[str, Optional[float]],
+        structured_signal: Dict[str, Any],
+        raw_result: Dict[str, Any],
+        analysis_date: Optional[date],
+        analysis_close: Optional[float],
+    ) -> None:
+        """Fill one AnalysisHistory row for create or same-day overwrite."""
+        row.query_id = query_id
+        row.code = result.code
+        row.name = result.name
+        row.report_type = report_type
+        row.sentiment_score = result.sentiment_score
+        row.operation_advice = result.operation_advice
+        row.trend_prediction = result.trend_prediction
+        row.analysis_summary = result.analysis_summary
+        row.final_score = structured_signal.get("final_score")
+        row.final_decision = structured_signal.get("final_decision")
+        row.rule_score = structured_signal.get("rule_score")
+        row.llm_score = structured_signal.get("llm_score")
+        row.signal_version = structured_signal.get("signal_version")
+        row.prompt_version = structured_signal.get("prompt_version")
+        row.raw_result = DatabaseManager._safe_json_dumps(raw_result)
+        row.news_content = news_content
+        row.context_snapshot = context_text
+        row.ideal_buy = sniper_points.get("ideal_buy")
+        row.secondary_buy = sniper_points.get("secondary_buy")
+        row.stop_loss = sniper_points.get("stop_loss")
+        row.take_profit = sniper_points.get("take_profit")
+        row.analysis_date = analysis_date
+        row.analysis_close = analysis_close
+        # Treat same-day reruns as replacing the latest stored analysis snapshot.
+        row.created_at = datetime.now()
+
+    @staticmethod
+    def _find_same_day_analysis_history(
+        session: Session,
+        *,
+        code: str,
+        report_type: str,
+        analysis_date: Optional[date],
+    ) -> Optional[AnalysisHistory]:
+        """Return the latest same-day history row when rerunning a stock analysis."""
+        if analysis_date is None:
+            return None
+
+        stmt = (
+            select(AnalysisHistory)
+            .where(
+                AnalysisHistory.code == code,
+                AnalysisHistory.report_type == report_type,
+                AnalysisHistory.analysis_date == analysis_date,
+            )
+            .order_by(desc(AnalysisHistory.created_at), desc(AnalysisHistory.id))
+            .limit(1)
+        )
+        return session.execute(stmt).scalars().first()
 
     @staticmethod
     def _extract_analysis_anchor(

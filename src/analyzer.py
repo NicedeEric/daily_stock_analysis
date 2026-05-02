@@ -1409,7 +1409,7 @@ class GeminiAnalyzer:
             or generation_config.get('max_tokens')
             or 8192
         )
-        requested_temperature = generation_config.get('temperature', 0.7)
+        requested_temperature = generation_config.get('temperature', 0.1)
 
         models_to_try = [config.litellm_model] + (config.litellm_fallback_models or [])
         models_to_try = [m for m in models_to_try if m]
@@ -1524,7 +1524,7 @@ class GeminiAnalyzer:
         self,
         prompt: str,
         max_tokens: int = 2048,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
     ) -> Optional[str]:
         """Public entry point for free-form text generation.
 
@@ -1535,7 +1535,8 @@ class GeminiAnalyzer:
         Args:
             prompt:      Text prompt to send to the LLM.
             max_tokens:  Maximum tokens in the response (default 2048).
-            temperature: Sampling temperature (default 0.7).
+            temperature: Optional sampling temperature override. When omitted,
+                use the shared low-temperature runtime default.
 
         Returns:
             Response text, or None if the LLM call fails (error is logged).

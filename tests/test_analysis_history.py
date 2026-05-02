@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -147,6 +148,50 @@ class AnalysisHistoryTestCase(unittest.TestCase):
             if row is None:
                 self.fail("未找到保存的历史记录")
             self.assertIsNone(row.context_snapshot)
+
+    def test_save_analysis_history_overwrites_same_day_record(self) -> None:
+        """Rerunning the same stock on the same analysis day should replace the existing row."""
+        first = self._build_result()
+        first.analysis_summary = "first pass"
+        snapshot = {
+            "analysis_date": "2026-05-01",
+            "analysis_close": 123.45,
+        }
+
+        saved = self.db.save_analysis_history(
+            result=first,
+            query_id="query_same_day_001",
+            report_type="simple",
+            news_content="first news",
+            context_snapshot=snapshot,
+            save_snapshot=True
+        )
+        self.assertEqual(saved, 1)
+
+        second = self._build_result()
+        second.sentiment_score = 88
+        second.analysis_summary = "second pass"
+        saved = self.db.save_analysis_history(
+            result=second,
+            query_id="query_same_day_002",
+            report_type="simple",
+            news_content="second news",
+            context_snapshot=snapshot,
+            save_snapshot=True
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            rows = session.query(AnalysisHistory).filter(
+                AnalysisHistory.code == "600519",
+                AnalysisHistory.report_type == "simple",
+                AnalysisHistory.analysis_date == date(2026, 5, 1),
+            ).all()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].query_id, "query_same_day_002")
+            self.assertEqual(rows[0].sentiment_score, 88)
+            self.assertEqual(rows[0].analysis_summary, "second pass")
+            self.assertEqual(rows[0].news_content, "second news")
 
     def test_save_analysis_history_persists_model_used(self) -> None:
         """model_used should be persisted in raw_result for history detail."""

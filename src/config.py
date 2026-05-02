@@ -449,7 +449,7 @@ def normalize_litellm_temperature(
     model: str,
     temperature: Optional[float],
     *,
-    default: float = 0.7,
+    default: float = 0.1,
     model_list: Optional[List[Dict[str, Any]]] = None,
     request_overrides: Optional[Dict[str, Any]] = None,
 ) -> float:
@@ -499,7 +499,7 @@ def resolve_unified_llm_temperature(model: str) -> float:
             except (ValueError, TypeError):
                 continue
 
-    return 0.7
+    return 0.1
 
 
 def _get_litellm_provider(model: str) -> str:
@@ -623,7 +623,7 @@ class Config:
     litellm_fallback_models: List[str] = field(default_factory=list)  # Cross-model fallback list
 
     # Unified temperature for all LLM calls (LLM_TEMPERATURE); legacy per-provider temps are fallback only
-    llm_temperature: float = 0.7
+    llm_temperature: float = 0.1
 
     # --- Multi-channel LLM config (new) ---
     # LITELLM_CONFIG: path to a standard litellm_config.yaml file (most powerful)
