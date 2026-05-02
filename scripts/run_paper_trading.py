@@ -138,7 +138,8 @@ def main() -> int:
         strategy_version=args.strategy_version,
         run_date=_parse_run_date(args.run_date),
     )
-    payload = {"strategy": strategy, "result": result}
+    decisions = _fetch_decisions_for_run(strategy, result)
+    payload = {"strategy": strategy, "result": result, "decisions": decisions}
     output_path = Path(args.output_json)
     _dump_json(output_path, payload)
     print(f"paper_trading_strategy={strategy['strategy_name']}:{strategy['strategy_version']}")
@@ -149,7 +150,6 @@ def main() -> int:
     print(f"paper_trading_output={output_path.resolve()}")
     if _as_bool(args.notify):
         from src.notification import NotificationService
-        decisions = _fetch_decisions_for_run(strategy, result)
         notify_message = build_paper_trading_message(strategy=strategy, result=result, decisions=decisions)
         if len(notify_message) > 3600:
             notify_message = notify_message[:3560] + "\n\n...truncated"

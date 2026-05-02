@@ -123,8 +123,32 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                 "paper_run_date": "2026-05-02",
                 "strategy": {"name": "signal_portfolio", "version": "v1_us"},
                 "delta_orders": [
-                    {"symbol": "AAPL", "side": "buy", "order_qty": 5, "live_qty": 0, "target_qty": 5},
-                    {"symbol": "TSLA", "side": "sell", "order_qty": 2, "live_qty": 4, "target_qty": 2},
+                    {
+                        "symbol": "AAPL",
+                        "side": "buy",
+                        "order_qty": 5,
+                        "live_qty": 0,
+                        "target_qty": 5,
+                        "paper_final_score": 78,
+                        "paper_rule_score": 70,
+                        "paper_action": "buy",
+                        "paper_status": "executed",
+                        "paper_final_decision": "buy",
+                        "paper_reasons": ["executed"],
+                    },
+                    {
+                        "symbol": "TSLA",
+                        "side": "sell",
+                        "order_qty": 2,
+                        "live_qty": 4,
+                        "target_qty": 2,
+                        "paper_final_score": 39,
+                        "paper_rule_score": 44,
+                        "paper_action": "sell",
+                        "paper_status": "executed",
+                        "paper_final_decision": "sell",
+                        "paper_reasons": ["executed"],
+                    },
                 ],
                 "summary": {"order_count": 2, "buy_count": 1, "sell_count": 1},
             }
@@ -135,6 +159,8 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Sell To Reduce*", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
+        self.assertIn("reason: executed | decision buy | status executed", message)
+        self.assertIn("reason: executed | decision sell | status executed", message)
 
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
         service = PaperTradingService.__new__(PaperTradingService)

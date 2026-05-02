@@ -97,6 +97,32 @@ def _build_reason_detail(row: Dict[str, Any]) -> str:
     return ", ".join(reasons[:2])
 
 
+def _build_reconcile_reason_detail(row: Dict[str, Any]) -> str:
+    reasons = [_humanize_reason(item) for item in (row.get("paper_reasons") or []) if str(item).strip()]
+    action = str(row.get("paper_action") or "").strip().lower()
+    final_decision = str(row.get("paper_final_decision") or "").strip().lower()
+    status = str(row.get("paper_status") or "").strip().lower()
+    side = str(row.get("side") or "").strip().lower()
+
+    if reasons:
+        detail = ", ".join(reasons[:2])
+    elif side == "sell" and _as_float(row.get("target_qty")) <= 0:
+        detail = "paper target has no position"
+    elif action:
+        detail = f"paper action {action}"
+    elif final_decision:
+        detail = f"paper decision {final_decision}"
+    else:
+        detail = "rebalance to paper target"
+
+    extras: List[str] = []
+    if final_decision:
+        extras.append(f"decision {final_decision}")
+    if status:
+        extras.append(f"status {status}")
+    return " | ".join([detail] + extras) if extras else detail
+
+
 def build_paper_trading_message(
     *,
     strategy: Dict[str, Any],
@@ -290,6 +316,8 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
                     ("QTY", 5),
                     ("LIVE", 5),
                     ("TARGET", 6),
+                    ("SCORE", 5),
+                    ("RULE", 4),
                 ]
             )
         )
@@ -305,9 +333,12 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
                         (_fmt_int(row.get("order_qty")), 5),
                         (_fmt_int(row.get("live_qty")), 5),
                         (_fmt_int(row.get("target_qty")), 6),
+                        (row.get("paper_final_score", "-"), 5),
+                        (row.get("paper_rule_score", "-"), 4),
                     ]
                 )
             )
+            lines.append(f"   reason: {_build_reconcile_reason_detail(row)}")
         lines.append("")
         return current_rows
 

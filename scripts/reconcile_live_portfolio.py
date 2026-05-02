@@ -26,10 +26,21 @@ def _normalize_positions(items: List[Dict[str, Any]]) -> Dict[str, float]:
     return out
 
 
+def _normalize_decisions(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for item in items or []:
+        symbol = str(item.get("symbol") or item.get("code") or "").strip().upper()
+        if not symbol:
+            continue
+        out[symbol] = item
+    return out
+
+
 def _build_delta_orders(
     *,
     live_positions: Dict[str, float],
     target_positions: Dict[str, float],
+    decision_map: Dict[str, Dict[str, Any]],
     min_delta_shares: float,
 ) -> List[Dict[str, Any]]:
     symbols = sorted(set(live_positions) | set(target_positions))
@@ -46,6 +57,7 @@ def _build_delta_orders(
         else:
             side = "sell"
             order_qty = abs(delta)
+        decision = decision_map.get(symbol) or {}
         orders.append(
             {
                 "symbol": symbol,
@@ -55,6 +67,16 @@ def _build_delta_orders(
                 "target_qty": target_qty,
                 "delta_qty": delta,
                 "reason": "rebalance_to_paper_target",
+                "paper_action": decision.get("action"),
+                "paper_status": decision.get("status"),
+                "paper_final_decision": decision.get("final_decision"),
+                "paper_final_score": decision.get("final_score"),
+                "paper_rule_score": decision.get("rule_score"),
+                "paper_reasons": decision.get("reasons") or [],
+                "paper_analysis_close": decision.get("analysis_close"),
+                "paper_ideal_buy": decision.get("ideal_buy"),
+                "paper_secondary_buy": decision.get("secondary_buy"),
+                "paper_signal_date": decision.get("signal_date"),
             }
         )
     return orders
@@ -88,10 +110,12 @@ def main() -> int:
     target_positions = _normalize_positions(
         (((paper.get("result") or {}).get("account_snapshot") or {}).get("positions") or [])
     )
+    decision_map = _normalize_decisions(paper.get("decisions") or [])
 
     orders = _build_delta_orders(
         live_positions=live_positions,
         target_positions=target_positions,
+        decision_map=decision_map,
         min_delta_shares=max(0.0, float(args.min_delta_shares)),
     )
 
