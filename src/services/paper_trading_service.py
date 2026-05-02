@@ -230,22 +230,93 @@ class PaperTradingService:
         refreshed_positions = refreshed_account.get("positions") or []
         held_symbols = {str(p.get("symbol", "")).upper() for p in refreshed_positions if float(p.get("quantity") or 0.0) > 0}
 
-        max_new_positions = max(0, config.max_positions - len(held_symbols))
-        buy_budget = max(0.0, available_cash - total_equity * config.cash_reserve_pct)
-        if max_new_positions > 0 and buy_budget > 0:
-            per_slot_budget = buy_budget / max_new_positions
-        else:
-            per_slot_budget = 0.0
+        signal_by_code = {str(item.get("code") or "").upper(): item for item in signals}
+        sold_symbols = {str(item.get("code") or "").upper() for item in sells}
+        reserve_floor = max(0.0, total_equity * config.cash_reserve_pct)
 
         for signal in buys:
-            if signal["code"] in held_symbols or max_new_positions <= 0:
+            code = str(signal["code"]).upper()
+            if code in held_symbols:
                 self._record_decision_only(
                     strategy_id=int(strategy.id),
                     run_date=run_date,
                     signal=signal,
                     action="skip",
                     target_weight=self._target_weight(signal["final_score"], config),
-                    reason_codes=["already_held_or_no_slot"],
+                    reason_codes=["already_held"],
+                    status="skipped",
+                )
+                skipped += 1
+                continue
+
+            if len(held_symbols) >= config.max_positions:
+                weakest_symbol: Optional[str] = None
+                weakest_score = float("inf")
+                for held_symbol in held_symbols:
+                    if held_symbol in sold_symbols:
+                        continue
+                    held_signal = signal_by_code.get(held_symbol) or {}
+                    held_score = float(held_signal.get("final_score") or 0)
+                    if held_score < weakest_score:
+                        weakest_score = held_score
+                        weakest_symbol = held_symbol
+                buy_score = float(signal.get("final_score") or 0)
+                if weakest_symbol and buy_score > weakest_score:
+                    swap_signal = signal_by_code.get(weakest_symbol) or {
+                        "analysis_id": None,
+                        "code": weakest_symbol,
+                        "name": weakest_symbol,
+                        "signal_date": run_date,
+                        "final_score": int(weakest_score),
+                        "rule_score": 0,
+                        "llm_score": 0,
+                        "final_decision": "sell",
+                        "ideal_buy": None,
+                        "secondary_buy": None,
+                        "stop_loss": None,
+                        "take_profit": None,
+                        "analysis_close": None,
+                        "created_at": None,
+                        "position_advice": {},
+                    }
+                    swap_qty = float(position_qty.get(weakest_symbol, 0.0))
+                    if swap_qty > 0:
+                        swap_status = self._execute_signal(
+                            strategy_id=int(strategy.id),
+                            account_id=account_id,
+                            signal=swap_signal,
+                            run_date=run_date,
+                            side="sell",
+                            quantity=swap_qty,
+                            config=config,
+                        )
+                        if swap_status == "executed":
+                            executed += 1
+                            held_symbols.discard(weakest_symbol)
+                            sold_symbols.add(weakest_symbol)
+                            available_cash = float(
+                                (
+                                    self.portfolio_service.get_portfolio_snapshot(
+                                        account_id=account_id,
+                                        as_of=run_date,
+                                    ).get("accounts")
+                                    or [{}]
+                                )[0].get("total_cash")
+                                or available_cash
+                            )
+                        elif swap_status == "skipped":
+                            skipped += 1
+                        else:
+                            errors += 1
+
+            if len(held_symbols) >= config.max_positions:
+                self._record_decision_only(
+                    strategy_id=int(strategy.id),
+                    run_date=run_date,
+                    signal=signal,
+                    action="skip",
+                    target_weight=self._target_weight(signal["final_score"], config),
+                    reason_codes=["no_slot_or_no_weaker_position"],
                     status="skipped",
                 )
                 skipped += 1
@@ -265,10 +336,10 @@ class PaperTradingService:
                 skipped += 1
                 continue
 
+            spendable_cash = max(0.0, available_cash - reserve_floor)
             target_value = min(
                 total_equity * self._target_weight(signal["final_score"], config),
-                per_slot_budget,
-                available_cash,
+                spendable_cash,
             )
             quantity = math.floor(max(0.0, target_value - config.trade_fee_usd) / entry_price)
             if quantity <= 0:
@@ -278,7 +349,7 @@ class PaperTradingService:
                     signal=signal,
                     action="buy",
                     target_weight=self._target_weight(signal["final_score"], config),
-                    reason_codes=["insufficient_cash"],
+                    reason_codes=["insufficient_buying_power_after_reserve"],
                     status="skipped",
                 )
                 skipped += 1
@@ -295,7 +366,7 @@ class PaperTradingService:
             )
             if status == "executed":
                 executed += 1
-                max_new_positions -= 1
+                held_symbols.add(code)
                 available_cash -= quantity * entry_price + config.trade_fee_usd
             elif status == "skipped":
                 skipped += 1
