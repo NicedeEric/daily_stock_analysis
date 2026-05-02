@@ -6,7 +6,7 @@ env:
 on:
   # 定时触发 - 每天北京时间 18:00 (UTC 10:00)
   schedule:
-    - cron: '5 0 * * 1-5'     # 周一到周五，UTC 13:00 = 北京时间 21:00
+    - cron: '17 0 * * 1-5'    # UTC 00:17 = 北京时间 08:17，周一到周五
   
   # 手动触发
   workflow_dispatch:
@@ -366,7 +366,7 @@ jobs:
           
           # 构建命令行参数
           FORCE_RUN_ARG=""
-          if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.force_run }}" = "true" ]; then
             FORCE_RUN_ARG="--force-run"
             echo "⚡ 已启用强制运行模式（跳过交易日检查）"
           fi
