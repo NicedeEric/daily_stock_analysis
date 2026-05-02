@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sqlalchemy import and_, select
 
-from src.reports.paper_trade_notifications import build_paper_trading_message
+from src.paper_trade_notifications import build_paper_trading_message
 from src.services.paper_trading_service import PaperTradingService
 from src.storage import DatabaseManager, PaperStrategyDecision
 

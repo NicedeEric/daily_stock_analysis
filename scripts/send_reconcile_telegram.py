@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from src.reports.paper_trade_notifications import build_reconcile_message
+from src.paper_trade_notifications import build_reconcile_message
 
 
 def _build_parser() -> argparse.ArgumentParser:

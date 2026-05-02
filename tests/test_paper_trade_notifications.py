@@ -1,6 +1,6 @@
 import unittest
 
-from src.reports.paper_trade_notifications import (
+from src.paper_trade_notifications import (
     build_paper_trading_message,
     build_reconcile_message,
 )
