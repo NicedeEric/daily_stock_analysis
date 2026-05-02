@@ -105,16 +105,40 @@ def _build_reconcile_reason_detail(row: Dict[str, Any]) -> str:
     side = str(row.get("side") or "").strip().lower()
     reconcile_reason = str(row.get("reason") or "").strip().lower()
 
-    if action == side or final_decision == side:
+    if reconcile_reason == "stop_loss_triggered":
+        detail = "stop loss triggered"
+        stop_loss = row.get("paper_stop_loss")
+        live_price = row.get("live_price")
+        if stop_loss is not None and live_price is not None:
+            detail = f"{detail} ({_fmt_currency(live_price)} <= {_fmt_currency(stop_loss)})"
+    elif reconcile_reason == "take_profit_triggered":
+        detail = "take profit triggered"
+        take_profit = row.get("paper_take_profit")
+        live_price = row.get("live_price")
+        if take_profit is not None and live_price is not None:
+            detail = f"{detail} ({_fmt_currency(live_price)} >= {_fmt_currency(take_profit)})"
+    elif reconcile_reason == "strategy_sell_signal":
+        if reasons:
+            detail = ", ".join(reasons[:2])
+        elif action:
+            detail = f"paper action {action}"
+        else:
+            detail = f"paper decision {final_decision or 'sell'}"
+    elif reconcile_reason == "strategy_buy_signal":
+        if reasons:
+            detail = ", ".join(reasons[:2])
+        elif action:
+            detail = f"paper action {action}"
+        else:
+            detail = f"paper decision {final_decision or 'buy'}"
+    elif action == side or final_decision == side:
         if reasons:
             detail = ", ".join(reasons[:2])
         elif action:
             detail = f"paper action {action}"
         else:
             detail = f"paper decision {final_decision}"
-    elif reconcile_reason == "paper_target_mismatch_no_model_position":
-        detail = "live position exists, but paper model has no target position"
-    elif reconcile_reason == "paper_target_rebalance":
+    elif reconcile_reason == "target_rebalance":
         detail = "live position differs from paper target sizing"
     elif reasons:
         detail = ", ".join(reasons[:2])
@@ -122,9 +146,9 @@ def _build_reconcile_reason_detail(row: Dict[str, Any]) -> str:
         detail = "rebalance to paper target"
 
     extras: List[str] = []
-    if final_decision and not (action == side or final_decision == side):
+    if final_decision and reconcile_reason in {"target_rebalance", "hold_no_trigger"}:
         extras.append(f"decision {final_decision}")
-    if status and (action == side or final_decision == side):
+    if status and reconcile_reason in {"strategy_sell_signal", "strategy_buy_signal"}:
         extras.append(f"status {status}")
     return " | ".join([detail] + extras) if extras else detail
 

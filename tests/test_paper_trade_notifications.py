@@ -159,7 +159,7 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Sell To Reduce*", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
-        self.assertIn("reason: executed | status executed", message)
+        self.assertIn("reason: executed", message)
 
     def test_build_reconcile_message_distinguishes_target_mismatch_from_sell_signal(self):
         message = build_reconcile_message(
@@ -174,20 +174,20 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                         "order_qty": 3,
                         "live_qty": 3,
                         "target_qty": 0,
-                        "reason": "paper_target_mismatch_no_model_position",
+                        "reason": "target_rebalance",
                         "paper_final_score": 66,
                         "paper_rule_score": 62,
                         "paper_action": "skip",
                         "paper_status": "skipped",
                         "paper_final_decision": "hold",
-                        "paper_reasons": ["already_held_or_no_slot"],
+                        "paper_reasons": [],
                     }
                 ],
                 "summary": {"order_count": 1, "buy_count": 0, "sell_count": 1},
             }
         )
 
-        self.assertIn("live position exists, but paper model has no target position", message)
+        self.assertIn("live position differs from paper target sizing", message)
         self.assertIn("decision hold", message)
         self.assertNotIn("paper target has no position", message)
 
