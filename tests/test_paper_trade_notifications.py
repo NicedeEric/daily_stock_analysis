@@ -159,8 +159,37 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Sell To Reduce*", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
-        self.assertIn("reason: executed | decision buy | status executed", message)
-        self.assertIn("reason: executed | decision sell | status executed", message)
+        self.assertIn("reason: executed | status executed", message)
+
+    def test_build_reconcile_message_distinguishes_target_mismatch_from_sell_signal(self):
+        message = build_reconcile_message(
+            {
+                "live_as_of": "2026-05-02",
+                "paper_run_date": "2026-05-02",
+                "strategy": {"name": "signal_portfolio", "version": "v1_us"},
+                "delta_orders": [
+                    {
+                        "symbol": "MSFT",
+                        "side": "sell",
+                        "order_qty": 3,
+                        "live_qty": 3,
+                        "target_qty": 0,
+                        "reason": "paper_target_mismatch_no_model_position",
+                        "paper_final_score": 66,
+                        "paper_rule_score": 62,
+                        "paper_action": "skip",
+                        "paper_status": "skipped",
+                        "paper_final_decision": "hold",
+                        "paper_reasons": ["already_held_or_no_slot"],
+                    }
+                ],
+                "summary": {"order_count": 1, "buy_count": 0, "sell_count": 1},
+            }
+        )
+
+        self.assertIn("live position exists, but paper model has no target position", message)
+        self.assertIn("decision hold", message)
+        self.assertNotIn("paper target has no position", message)
 
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
         service = PaperTradingService.__new__(PaperTradingService)

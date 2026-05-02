@@ -103,22 +103,28 @@ def _build_reconcile_reason_detail(row: Dict[str, Any]) -> str:
     final_decision = str(row.get("paper_final_decision") or "").strip().lower()
     status = str(row.get("paper_status") or "").strip().lower()
     side = str(row.get("side") or "").strip().lower()
+    reconcile_reason = str(row.get("reason") or "").strip().lower()
 
-    if reasons:
+    if action == side or final_decision == side:
+        if reasons:
+            detail = ", ".join(reasons[:2])
+        elif action:
+            detail = f"paper action {action}"
+        else:
+            detail = f"paper decision {final_decision}"
+    elif reconcile_reason == "paper_target_mismatch_no_model_position":
+        detail = "live position exists, but paper model has no target position"
+    elif reconcile_reason == "paper_target_rebalance":
+        detail = "live position differs from paper target sizing"
+    elif reasons:
         detail = ", ".join(reasons[:2])
-    elif side == "sell" and _as_float(row.get("target_qty")) <= 0:
-        detail = "paper target has no position"
-    elif action:
-        detail = f"paper action {action}"
-    elif final_decision:
-        detail = f"paper decision {final_decision}"
     else:
         detail = "rebalance to paper target"
 
     extras: List[str] = []
-    if final_decision:
+    if final_decision and not (action == side or final_decision == side):
         extras.append(f"decision {final_decision}")
-    if status:
+    if status and (action == side or final_decision == side):
         extras.append(f"status {status}")
     return " | ".join([detail] + extras) if extras else detail
 

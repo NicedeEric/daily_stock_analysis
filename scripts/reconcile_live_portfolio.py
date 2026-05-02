@@ -58,6 +58,14 @@ def _build_delta_orders(
             side = "sell"
             order_qty = abs(delta)
         decision = decision_map.get(symbol) or {}
+        paper_action = str(decision.get("action") or "").strip().lower()
+        paper_final_decision = str(decision.get("final_decision") or "").strip().lower()
+        if paper_action == side or paper_final_decision == side:
+            reconcile_reason = "paper_decision_alignment"
+        elif target_qty <= 0 and live_qty > 0:
+            reconcile_reason = "paper_target_mismatch_no_model_position"
+        else:
+            reconcile_reason = "paper_target_rebalance"
         orders.append(
             {
                 "symbol": symbol,
@@ -66,7 +74,7 @@ def _build_delta_orders(
                 "live_qty": live_qty,
                 "target_qty": target_qty,
                 "delta_qty": delta,
-                "reason": "rebalance_to_paper_target",
+                "reason": reconcile_reason,
                 "paper_action": decision.get("action"),
                 "paper_status": decision.get("status"),
                 "paper_final_decision": decision.get("final_decision"),
