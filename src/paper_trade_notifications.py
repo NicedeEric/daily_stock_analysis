@@ -153,6 +153,19 @@ def _build_reconcile_reason_detail(row: Dict[str, Any]) -> str:
     return " | ".join([detail] + extras) if extras else detail
 
 
+def _build_position_advice_detail(row: Dict[str, Any]) -> str:
+    advice = row.get("paper_position_advice") or {}
+    if not isinstance(advice, dict):
+        return ""
+    no_position = str(advice.get("no_position") or "").strip()
+    has_position = str(advice.get("has_position") or "").strip()
+    live_qty = _as_float(row.get("live_qty"), 0.0)
+    preferred = has_position if live_qty > 0 else no_position
+    if preferred:
+        return preferred
+    return has_position or no_position
+
+
 def build_paper_trading_message(
     *,
     strategy: Dict[str, Any],
@@ -369,6 +382,9 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
                 )
             )
             lines.append(f"   reason: {_build_reconcile_reason_detail(row)}")
+            advice_text = _build_position_advice_detail(row)
+            if advice_text:
+                lines.append(f"   advice: {advice_text}")
         lines.append("")
         return current_rows
 

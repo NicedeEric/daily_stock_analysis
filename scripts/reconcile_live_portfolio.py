@@ -123,8 +123,13 @@ def _build_delta_orders(
         effective_target_qty = target_qty
         if forced_target_qty is not None:
             effective_target_qty = forced_target_qty
-        elif paper_final_decision == "hold" and target_qty <= 0 and live_qty > 0:
-            # Hold should not force liquidation just because paper account has no position.
+        elif (
+            target_qty <= 0
+            and live_qty > 0
+            and paper_final_decision in {"", "hold"}
+            and paper_action not in {"sell"}
+        ):
+            # User-approved behavior: keep live holdings on hold/no-signal.
             effective_target_qty = live_qty
 
         delta = effective_target_qty - live_qty
@@ -154,11 +159,16 @@ def _build_delta_orders(
                 reconcile_reason = "target_rebalance"
                 reason_priority = 5
 
+        # Keep execution list clean when tiny floating deltas round to zero shares.
+        order_qty_int = int(round(order_qty))
+        if order_qty_int <= 0:
+            continue
+
         orders.append(
             {
                 "symbol": symbol,
                 "side": side,
-                "order_qty": int(order_qty),
+                "order_qty": order_qty_int,
                 "live_qty": live_qty,
                 "target_qty": target_qty,
                 "effective_target_qty": effective_target_qty,
@@ -178,6 +188,7 @@ def _build_delta_orders(
                 "paper_signal_date": decision.get("signal_date"),
                 "paper_stop_loss": stop_loss,
                 "paper_take_profit": take_profit,
+                "paper_position_advice": decision.get("position_advice") or {},
             }
         )
     return orders

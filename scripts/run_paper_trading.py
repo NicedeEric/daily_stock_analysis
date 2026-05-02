@@ -104,6 +104,7 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
                 "price": getattr(row, "execution_price", None),
                 "notional": getattr(row, "execution_notional", None),
                 "reasons": reasons,
+                "position_advice": (snapshot.get("position_advice") or {}),
             }
         )
     return items

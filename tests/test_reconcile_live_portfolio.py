@@ -67,6 +67,33 @@ class ReconcileLivePortfolioTestCase(unittest.TestCase):
         self.assertEqual(order["order_qty"], 2)
         self.assertEqual(order["reason"], "strategy_buy_signal")
 
+    def test_reconcile_keeps_hold_positions_when_no_sell_signal(self):
+        orders = _build_delta_orders(
+            live_positions={"AAPL": 2},
+            live_prices={"AAPL": 205},
+            target_positions={"AAPL": 0},
+            decision_map={
+                "AAPL": {
+                    "action": "hold",
+                    "final_decision": "hold",
+                    "final_score": 68,
+                    "rule_score": 62,
+                }
+            },
+            min_delta_shares=0.0,
+        )
+        self.assertEqual(orders, [])
+
+    def test_reconcile_filters_zero_share_orders_after_rounding(self):
+        orders = _build_delta_orders(
+            live_positions={"JPM": 0.4},
+            live_prices={"JPM": 240},
+            target_positions={"JPM": 0.0},
+            decision_map={"JPM": {"action": "sell", "final_decision": "sell"}},
+            min_delta_shares=0.0,
+        )
+        self.assertEqual(orders, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -191,6 +191,34 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("decision hold", message)
         self.assertNotIn("paper target has no position", message)
 
+    def test_build_reconcile_message_includes_position_advice_for_holders(self):
+        message = build_reconcile_message(
+            {
+                "live_as_of": "2026-05-02",
+                "paper_run_date": "2026-05-02",
+                "strategy": {"name": "signal_portfolio", "version": "v1_us"},
+                "delta_orders": [
+                    {
+                        "symbol": "AAPL",
+                        "side": "sell",
+                        "order_qty": 1,
+                        "live_qty": 2,
+                        "target_qty": 0,
+                        "reason": "strategy_sell_signal",
+                        "paper_action": "sell",
+                        "paper_final_decision": "sell",
+                        "paper_reasons": ["signal_flip"],
+                        "paper_position_advice": {
+                            "no_position": "wait for clearer setup",
+                            "has_position": "reduce position and lock gains",
+                        },
+                    }
+                ],
+                "summary": {"order_count": 1, "buy_count": 0, "sell_count": 1},
+            }
+        )
+        self.assertIn("advice: reduce position and lock gains", message)
+
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
         service = PaperTradingService.__new__(PaperTradingService)
         price = service._resolve_entry_price(

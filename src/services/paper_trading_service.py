@@ -343,6 +343,7 @@ class PaperTradingService:
             signal_date = BacktestRepository.parse_analysis_date_from_snapshot(getattr(row, "context_snapshot", None))
             if signal_date is None and getattr(row, "created_at", None):
                 signal_date = row.created_at.date()
+            position_advice = self._extract_position_advice(getattr(row, "raw_result", None))
             snapshots.append(
                 {
                     "analysis_id": int(row.id),
@@ -359,6 +360,7 @@ class PaperTradingService:
                     "take_profit": self._safe_float(getattr(row, "take_profit", None)),
                     "analysis_close": self._safe_float(getattr(row, "analysis_close", None)),
                     "created_at": row.created_at.isoformat() if getattr(row, "created_at", None) else None,
+                    "position_advice": position_advice,
                 }
             )
         return sorted(snapshots, key=lambda item: item.get("final_score", 0), reverse=True)
@@ -659,6 +661,7 @@ class PaperTradingService:
                 "analysis_close": signal.get("analysis_close"),
                 "signal_date": signal.get("signal_date").isoformat() if isinstance(signal.get("signal_date"), date) else None,
                 "created_at": signal.get("created_at"),
+                "position_advice": signal.get("position_advice") or {},
             }
             if row is None:
                 row = PaperStrategyDecision(
@@ -715,6 +718,23 @@ class PaperTradingService:
         except Exception:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _extract_position_advice(cls, raw_result: Any) -> Dict[str, str]:
+        payload = cls._safe_json_loads(raw_result)
+        dashboard = payload.get("dashboard") if isinstance(payload, dict) else None
+        core = dashboard.get("core_conclusion") if isinstance(dashboard, dict) else None
+        pos = core.get("position_advice") if isinstance(core, dict) else None
+        if not isinstance(pos, dict):
+            return {}
+        no_position = str(pos.get("no_position") or "").strip()
+        has_position = str(pos.get("has_position") or "").strip()
+        out: Dict[str, str] = {}
+        if no_position:
+            out["no_position"] = no_position
+        if has_position:
+            out["has_position"] = has_position
+        return out
 
     @staticmethod
     def _strategy_to_dict(row: PaperStrategyDefinition) -> Dict[str, Any]:
