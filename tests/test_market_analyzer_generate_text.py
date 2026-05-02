@@ -67,7 +67,7 @@ class TestAnalyzerGenerateText:
             _, kwargs = mock_call.call_args
             gen_cfg = kwargs["generation_config"]
             assert gen_cfg["max_tokens"] == 2048
-            assert gen_cfg["temperature"] == 0.7
+            assert gen_cfg["temperature"] is None
 
     def test_call_litellm_stream_aggregates_chunks_and_reports_progress(self):
         analyzer = self._make_analyzer()
@@ -665,7 +665,7 @@ class TestMarketAnalyzerBypassFix:
         ma.analyzer.generate_text.assert_called_once()
         _, kwargs = ma.analyzer.generate_text.call_args
         assert kwargs["max_tokens"] == 8192
-        assert kwargs["temperature"] == 0.7
+        assert kwargs["temperature"] == ma.config.llm_temperature
 
     def test_generate_template_review_uses_english_shell_for_cn_when_report_language_is_en(self):
         from src.market_analyzer import MarketOverview, MarketIndex
