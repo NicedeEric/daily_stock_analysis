@@ -59,6 +59,44 @@ def _humanize_reason(value: Any) -> str:
     return text.replace("_", " ")
 
 
+def _clip(text: Any, width: int) -> str:
+    raw = str(text or "")
+    if len(raw) <= width:
+        return raw.ljust(width)
+    if width <= 1:
+        return raw[:width]
+    return f"{raw[:width - 1]}…"
+
+
+def _code_line(columns: List[tuple[Any, int]]) -> str:
+    return "`" + " ".join(_clip(value, width) for value, width in columns) + "`"
+
+
+def _build_reason_detail(row: Dict[str, Any]) -> str:
+    reasons = [_humanize_reason(item) for item in (row.get("reasons") or []) if str(item).strip()]
+    if not reasons:
+        return "signal review"
+
+    if "missing_entry_price" in {str(item).strip() for item in (row.get("reasons") or [])}:
+        detail_parts: List[str] = ["missing entry price"]
+        analysis_close = row.get("analysis_close")
+        ideal_buy = row.get("ideal_buy")
+        secondary_buy = row.get("secondary_buy")
+        signal_date = row.get("signal_date")
+        if analysis_close is not None:
+            label = "last close"
+            if signal_date:
+                label = f"last close ({signal_date})"
+            detail_parts.append(f"{label} {_fmt_currency(analysis_close)}")
+        if ideal_buy is not None:
+            detail_parts.append(f"ideal buy {_fmt_currency(ideal_buy)}")
+        if secondary_buy is not None:
+            detail_parts.append(f"secondary buy {_fmt_currency(secondary_buy)}")
+        return " | ".join(detail_parts)
+
+    return ", ".join(reasons[:2])
+
+
 def build_paper_trading_message(
     *,
     strategy: Dict[str, Any],
@@ -127,6 +165,19 @@ def build_paper_trading_message(
     if not actionable:
         lines.append("- No actionable orders today. Portfolio stays unchanged.")
     else:
+        lines.append(
+            _code_line(
+                [
+                    ("ACT", 4),
+                    ("CODE", 6),
+                    ("QTY", 5),
+                    ("PRICE", 9),
+                    ("VALUE", 10),
+                    ("SCORE", 5),
+                    ("RULE", 4),
+                ]
+            )
+        )
         for idx, row in enumerate(actionable[:max_action_rows], start=1):
             action = str(row.get("action") or "-").upper()
             code = str(row.get("code") or "-")
@@ -135,11 +186,20 @@ def build_paper_trading_message(
             notional = _fmt_currency(row.get("notional"))
             score = row.get("final_score", "-")
             rule_score = row.get("rule_score", "-")
-            reason_list = [_humanize_reason(item) for item in (row.get("reasons") or []) if str(item).strip()]
-            reason_text = ", ".join(reason_list[:2]) if reason_list else "signal review"
+            reason_text = _build_reason_detail(row)
             lines.append(
-                f"{idx}. {action} {code} | qty {qty} | px {price} | value {notional} | "
-                f"score {score} / rule {rule_score}"
+                f"{idx}. "
+                + _code_line(
+                    [
+                        (action, 4),
+                        (code, 6),
+                        (qty, 5),
+                        (price, 9),
+                        (notional, 10),
+                        (score, 5),
+                        (rule_score, 4),
+                    ]
+                )
             )
             lines.append(f"   reason: {reason_text}")
         if len(actionable) > max_action_rows:
@@ -155,6 +215,18 @@ def build_paper_trading_message(
     if not positions:
         lines.append("- No open paper positions.")
     else:
+        lines.append(
+            _code_line(
+                [
+                    ("CODE", 6),
+                    ("QTY", 5),
+                    ("LAST", 9),
+                    ("AVG", 9),
+                    ("PNL%", 7),
+                    ("WT%", 7),
+                ]
+            )
+        )
         for idx, position in enumerate(positions[:max_position_rows], start=1):
             symbol = position.get("symbol") or "-"
             qty = _as_float(position.get("quantity"))
@@ -164,9 +236,17 @@ def build_paper_trading_message(
             weight_pct = (market_val / total_equity * 100.0) if total_equity > 0 else 0.0
             pnl_pct = ((last_price - avg_cost) / avg_cost * 100.0) if avg_cost > 0 else 0.0
             lines.append(
-                f"{idx}. {symbol} | qty {_fmt_int(qty)} | last {_fmt_currency(last_price)} | "
-                f"avg {_fmt_currency(avg_cost)} | pnl {_fmt_pct(pnl_pct, digits=2)} | "
-                f"wt {_fmt_pct(weight_pct, digits=2)}"
+                f"{idx}. "
+                + _code_line(
+                    [
+                        (symbol, 6),
+                        (_fmt_int(qty), 5),
+                        (_fmt_currency(last_price), 9),
+                        (_fmt_currency(avg_cost), 9),
+                        (_fmt_pct(pnl_pct, digits=2), 7),
+                        (_fmt_pct(weight_pct, digits=2), 7),
+                    ]
+                )
             )
         if len(positions) > max_position_rows:
             lines.append(f"- ... {len(positions) - max_position_rows} more positions omitted")
@@ -203,14 +283,30 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
         if not items:
             return current_rows
         lines.append(f"*{title}*")
+        lines.append(
+            _code_line(
+                [
+                    ("CODE", 6),
+                    ("QTY", 5),
+                    ("LIVE", 5),
+                    ("TARGET", 6),
+                ]
+            )
+        )
         for row in items:
             if current_rows >= max_rows:
                 break
             current_rows += 1
             lines.append(
-                f"{current_rows}. {str(row.get('symbol') or '-').upper()} | "
-                f"qty {_fmt_int(row.get('order_qty'))} | "
-                f"live {_fmt_int(row.get('live_qty'))} -> target {_fmt_int(row.get('target_qty'))}"
+                f"{current_rows}. "
+                + _code_line(
+                    [
+                        (str(row.get("symbol") or "-").upper(), 6),
+                        (_fmt_int(row.get("order_qty")), 5),
+                        (_fmt_int(row.get("live_qty")), 5),
+                        (_fmt_int(row.get("target_qty")), 6),
+                    ]
+                )
             )
         lines.append("")
         return current_rows

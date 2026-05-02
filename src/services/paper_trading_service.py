@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PaperStrategyConfig:
-    max_positions: int = 5
+    max_positions: int = 10
     max_position_pct: float = 0.20
-    cash_reserve_pct: float = 0.20
+    cash_reserve_pct: float = 0.50
     min_buy_score: int = 70
     min_rule_score: int = 65
     sell_score_threshold: int = 40
@@ -349,8 +349,11 @@ class PaperTradingService:
                     "rule_score": int(getattr(row, "rule_score", 0) or 0),
                     "llm_score": int(getattr(row, "llm_score", 0) or 0),
                     "final_decision": str(getattr(row, "final_decision", "") or "hold").strip().lower(),
+                    "ideal_buy": self._safe_float(getattr(row, "ideal_buy", None)),
+                    "secondary_buy": self._safe_float(getattr(row, "secondary_buy", None)),
                     "stop_loss": self._safe_float(getattr(row, "stop_loss", None)),
                     "take_profit": self._safe_float(getattr(row, "take_profit", None)),
+                    "analysis_close": self._safe_float(getattr(row, "analysis_close", None)),
                     "created_at": row.created_at.isoformat() if getattr(row, "created_at", None) else None,
                 }
             )
@@ -642,8 +645,11 @@ class PaperTradingService:
                 "final_decision": signal.get("final_decision"),
                 "rule_score": signal.get("rule_score"),
                 "llm_score": signal.get("llm_score"),
+                "ideal_buy": signal.get("ideal_buy"),
+                "secondary_buy": signal.get("secondary_buy"),
                 "stop_loss": signal.get("stop_loss"),
                 "take_profit": signal.get("take_profit"),
+                "analysis_close": signal.get("analysis_close"),
                 "signal_date": signal.get("signal_date").isoformat() if isinstance(signal.get("signal_date"), date) else None,
                 "created_at": signal.get("created_at"),
             }

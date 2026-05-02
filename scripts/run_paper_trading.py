@@ -30,9 +30,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--market", default=os.getenv("PAPER_MARKET", "us"))
     parser.add_argument("--base-currency", default=os.getenv("PAPER_BASE_CURRENCY", "USD"))
     parser.add_argument("--run-date", default=os.getenv("PAPER_RUN_DATE", ""))
-    parser.add_argument("--max-positions", type=int, default=int(os.getenv("PAPER_MAX_POSITIONS", "5")))
+    parser.add_argument("--max-positions", type=int, default=int(os.getenv("PAPER_MAX_POSITIONS", "10")))
     parser.add_argument("--max-position-pct", type=float, default=float(os.getenv("PAPER_MAX_POSITION_PCT", "0.20")))
-    parser.add_argument("--cash-reserve-pct", type=float, default=float(os.getenv("PAPER_CASH_RESERVE_PCT", "0.20")))
+    parser.add_argument("--cash-reserve-pct", type=float, default=float(os.getenv("PAPER_CASH_RESERVE_PCT", "0.50")))
     parser.add_argument("--min-buy-score", type=int, default=int(os.getenv("PAPER_MIN_BUY_SCORE", "70")))
     parser.add_argument("--min-rule-score", type=int, default=int(os.getenv("PAPER_MIN_RULE_SCORE", "65")))
     parser.add_argument("--sell-score-threshold", type=int, default=int(os.getenv("PAPER_SELL_SCORE_THRESHOLD", "40")))
@@ -95,6 +95,10 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
                 "final_score": snapshot.get("final_score"),
                 "rule_score": snapshot.get("rule_score"),
                 "final_decision": snapshot.get("final_decision"),
+                "ideal_buy": snapshot.get("ideal_buy"),
+                "secondary_buy": snapshot.get("secondary_buy"),
+                "analysis_close": snapshot.get("analysis_close"),
+                "signal_date": snapshot.get("signal_date"),
                 "qty": getattr(row, "execution_quantity", None),
                 "price": getattr(row, "execution_price", None),
                 "notional": getattr(row, "execution_notional", None),
