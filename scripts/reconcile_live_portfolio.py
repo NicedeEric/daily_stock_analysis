@@ -194,7 +194,7 @@ def main() -> int:
     parser.add_argument(
         "--min-delta-shares",
         type=float,
-        default=1.0,
+        default=0.0,
         help="Ignore tiny deltas below this share amount.",
     )
     parser.add_argument(

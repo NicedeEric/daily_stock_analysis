@@ -18,7 +18,7 @@ on:
       min_delta_shares:
         description: "Ignore delta below shares"
         required: false
-        default: "1"
+        default: "0"
       notify_paper:
         description: "Send paper trading telegram message (true/false)"
         required: false
