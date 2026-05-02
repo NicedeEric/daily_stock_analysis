@@ -1,9 +1,11 @@
+from datetime import date
 import unittest
 
 from src.paper_trade_notifications import (
     build_paper_trading_message,
     build_reconcile_message,
 )
+from src.services.paper_trading_service import PaperStrategyConfig, PaperTradingService
 
 
 class PaperTradeNotificationsTestCase(unittest.TestCase):
@@ -133,6 +135,19 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Sell To Reduce*", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
+
+    def test_analysis_close_execution_mode_uses_analysis_close_price(self):
+        service = PaperTradingService.__new__(PaperTradingService)
+        price = service._resolve_entry_price(
+            {
+                "code": "GEV",
+                "signal_date": date(2026, 5, 1),
+                "analysis_close": 1072.09,
+            },
+            run_date=date(2026, 5, 2),
+            config=PaperStrategyConfig(execution_mode="analysis_close"),
+        )
+        self.assertEqual(price, 1072.09)
 
 
 if __name__ == "__main__":

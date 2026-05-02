@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 新增 Supabase 迁移 SQL：`scripts/sql/supabase_analysis_history_date_migration.sql`，支持从 `context_snapshot` 回填历史日期与收盘价。
 - [改进] 优化 `paper_trading` 与 `paper_reconcile` 的 Telegram 通知排版，改为更适合日常盯盘的摘要卡片与分组调仓清单。
 - [改进] `paper_trading` 的缺失入场价提示会附带最近收盘价与候选买点，并将默认持仓上限提升到 `10` 只、默认现金保留比例提升到 `50%`。
+- [改进] `paper_trading` 默认执行价模式改为 `analysis_close` 以贴近盘后交易流程，并修复 `send_reconcile_telegram.py` 在 GitHub Actions 中缺少 `src` 导入路径的问题。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->

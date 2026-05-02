@@ -37,7 +37,7 @@ class PaperStrategyConfig:
     sell_score_threshold: int = 40
     trade_fee_usd: float = 1.30
     slippage_bps: float = 5.0
-    execution_mode: str = "next_open"
+    execution_mode: str = "analysis_close"
     lookback_days: int = 3
     market: str = "us"
 
@@ -59,6 +59,10 @@ class PaperStrategyConfig:
         instance.trade_fee_usd = max(0.0, float(instance.trade_fee_usd))
         instance.slippage_bps = max(0.0, float(instance.slippage_bps))
         instance.lookback_days = max(1, int(instance.lookback_days))
+        execution_mode = str(instance.execution_mode or "analysis_close").strip().lower()
+        if execution_mode not in {"analysis_close", "next_open"}:
+            execution_mode = "analysis_close"
+        instance.execution_mode = execution_mode
         instance.market = str(instance.market or "us").strip().lower() or "us"
         return instance
 
@@ -530,6 +534,9 @@ class PaperTradingService:
         signal_date = signal.get("signal_date")
         if not isinstance(signal_date, date):
             return None
+        if config.execution_mode == "analysis_close":
+            analysis_close = self._safe_float(signal.get("analysis_close"))
+            return analysis_close if analysis_close and analysis_close > 0 else None
         if config.execution_mode != "next_open":
             return None
         bars = self.stock_repo.get_forward_bars(

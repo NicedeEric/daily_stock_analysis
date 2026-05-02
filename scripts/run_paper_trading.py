@@ -39,6 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trade-fee-usd", type=float, default=float(os.getenv("PAPER_TRADE_FEE_USD", "1.3")))
     parser.add_argument("--slippage-bps", type=float, default=float(os.getenv("PAPER_SLIPPAGE_BPS", "5")))
     parser.add_argument("--lookback-days", type=int, default=int(os.getenv("PAPER_SIGNAL_LOOKBACK_DAYS", "3")))
+    parser.add_argument("--execution-mode", default=os.getenv("PAPER_EXECUTION_MODE", "analysis_close"))
     parser.add_argument("--notify", default=os.getenv("PAPER_NOTIFY", "false"))
     parser.add_argument("--output-json", default=os.getenv("PAPER_OUTPUT_JSON", "data/paper_trading_result.json"))
     return parser
@@ -122,7 +123,7 @@ def main() -> int:
         "slippage_bps": args.slippage_bps,
         "lookback_days": args.lookback_days,
         "market": args.market,
-        "execution_mode": "next_open",
+        "execution_mode": args.execution_mode,
     }
     strategy = service.ensure_strategy(
         strategy_name=args.strategy_name,
