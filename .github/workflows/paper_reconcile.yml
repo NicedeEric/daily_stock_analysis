@@ -87,6 +87,9 @@ jobs:
           python scripts/run_paper_trading.py --output-json data/paper_trading_result.json
 
       - name: Reconcile live vs paper target
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+          DATABASE_POOL_MODE: ${{ vars.DATABASE_POOL_MODE || secrets.DATABASE_POOL_MODE || 'auto' }}
         run: |
           python scripts/reconcile_live_portfolio.py \
             --live-json data/live_portfolio.json \
