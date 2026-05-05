@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] `scripts/reconcile_live_portfolio.py` 现在会自动注入仓库根目录到 `sys.path`，修复 GitHub Actions 直接运行脚本时 `ModuleNotFoundError: No module named 'src'` 的问题。
 - [修复] `paper_reconcile` 现在会补齐 `paper decisions` 中的止损/止盈字段，并按股票代码从 `analysis_history` 回填缺失的分数、买点与风控价位，避免持仓调仓行出现空白列。
 - [改进] `paper_reconcile` 的 Telegram 输出新增统一的 `Action Context` 区块，并为买卖两侧订单对齐展示当前价、均价、止损、止盈、入场位与持仓建议。
 - [改进] 同一股票同一分析日重复运行时，`analysis_history` 改为覆盖更新已有记录，避免 Supabase 中产生重复日度分析。
