@@ -454,6 +454,8 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
                         ("QTY", 5),
                         ("LIVE", 5),
                         ("TARGET", 6),
+                        ("SL", 10),
+                        ("TP", 10),
                         ("SCORE", 5),
                         ("RULE", 4),
                     ]
@@ -471,6 +473,8 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
                             (_fmt_int(row.get("order_qty")), 5),
                             (_fmt_int(row.get("live_qty")), 5),
                             (_fmt_int(row.get("target_qty")), 6),
+                            (_fmt_currency(row.get("paper_stop_loss")), 10),
+                            (_fmt_currency(row.get("paper_take_profit")), 10),
                             (row.get("paper_final_score", "-"), 5),
                             (row.get("paper_rule_score", "-"), 4),
                         ]
