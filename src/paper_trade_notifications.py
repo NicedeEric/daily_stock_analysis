@@ -166,6 +166,55 @@ def _build_position_advice_detail(row: Dict[str, Any]) -> str:
     return has_position or no_position
 
 
+def _build_status_detail(row: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    live_price = row.get("live_price")
+    live_price_source = str(row.get("live_price_source") or "").strip()
+    live_avg_cost = row.get("live_avg_cost")
+    stop_loss = row.get("paper_stop_loss")
+    take_profit = row.get("paper_take_profit")
+    ideal_buy = row.get("paper_ideal_buy")
+    secondary_buy = row.get("paper_secondary_buy")
+    signal_date = row.get("paper_signal_date")
+
+    if live_price is not None:
+        price_label = "current"
+        if live_price_source == "paper_analysis_close":
+            price_label = "current*"
+        parts.append(f"{price_label} {_fmt_currency(live_price)}")
+    if live_avg_cost is not None:
+        parts.append(f"avg {_fmt_currency(live_avg_cost)}")
+    if stop_loss is not None:
+        parts.append(f"stop {_fmt_currency(stop_loss)}")
+    if take_profit is not None:
+        parts.append(f"take {_fmt_currency(take_profit)}")
+    if ideal_buy is not None:
+        entry_text = f"entry {_fmt_currency(ideal_buy)}"
+        if secondary_buy is not None:
+            entry_text = f"{entry_text} / {_fmt_currency(secondary_buy)}"
+        parts.append(entry_text)
+    if signal_date:
+        parts.append(f"signal {signal_date}")
+    if not parts:
+        return ""
+    if live_price_source == "paper_analysis_close":
+        parts.append("price fallback paper close")
+    return " | ".join(parts)
+
+
+def _build_signal_state(row: Dict[str, Any]) -> str:
+    live_qty = _as_float(row.get("live_qty"), 0.0)
+    target_qty = _as_float(row.get("target_qty"), 0.0)
+    final_decision = str(row.get("paper_final_decision") or "").strip().lower()
+    if live_qty > 0:
+        return "holding"
+    if target_qty > 0 or final_decision == "buy":
+        return "watch entry"
+    if final_decision == "sell":
+        return "avoid / exit"
+    return "observe"
+
+
 def build_paper_trading_message(
     *,
     strategy: Dict[str, Any],
@@ -327,6 +376,7 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
     summary = payload.get("summary") or {}
     strategy = payload.get("strategy") or {}
     orders = list(payload.get("delta_orders") or [])
+    signal_rows = list(payload.get("signal_rows") or [])
     buys = [row for row in orders if str(row.get("side") or "").lower() == "buy"]
     sells = [row for row in orders if str(row.get("side") or "").lower() == "sell"]
 
@@ -346,51 +396,134 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
     if not orders:
         lines.append("*Delta Orders*")
         lines.append("- Live portfolio already matches paper target.")
-        return "\n".join(lines)
-
-    def _append_order_section(title: str, items: List[Dict[str, Any]], current_rows: int) -> int:
-        if not items:
+    else:
+        def _append_order_section(title: str, items: List[Dict[str, Any]], current_rows: int) -> int:
+            if not items:
+                return current_rows
+            lines.append(f"*{title}*")
+            lines.append(
+                _code_line(
+                    [
+                        ("CODE", 6),
+                        ("QTY", 5),
+                        ("LIVE", 5),
+                        ("TARGET", 6),
+                        ("SCORE", 5),
+                        ("RULE", 4),
+                    ]
+                )
+            )
+            for row in items:
+                if current_rows >= max_rows:
+                    break
+                current_rows += 1
+                lines.append(
+                    f"{current_rows}. "
+                    + _code_line(
+                        [
+                            (str(row.get("symbol") or "-").upper(), 6),
+                            (_fmt_int(row.get("order_qty")), 5),
+                            (_fmt_int(row.get("live_qty")), 5),
+                            (_fmt_int(row.get("target_qty")), 6),
+                            (row.get("paper_final_score", "-"), 5),
+                            (row.get("paper_rule_score", "-"), 4),
+                        ]
+                    )
+                )
+                lines.append(f"   reason: {_build_reconcile_reason_detail(row)}")
+                status_text = _build_status_detail(row)
+                if status_text:
+                    lines.append(f"   status: {status_text}")
+                advice_text = _build_position_advice_detail(row)
+                if advice_text:
+                    lines.append(f"   advice: {advice_text}")
+            lines.append("")
             return current_rows
-        lines.append(f"*{title}*")
+
+        shown = 0
+        shown = _append_order_section("Buy To Add", buys, shown)
+        shown = _append_order_section("Sell To Reduce", sells, shown)
+        if len(orders) > shown:
+            lines.append(f"- ... {len(orders) - shown} more orders omitted")
+
+    live_positions = [row for row in signal_rows if _as_float(row.get("live_qty"), 0.0) > 0]
+    watch_entries = [
+        row for row in signal_rows
+        if _as_float(row.get("live_qty"), 0.0) <= 0
+        and (
+            _as_float(row.get("target_qty"), 0.0) > 0
+            or str(row.get("paper_final_decision") or "").strip().lower() == "buy"
+        )
+    ]
+
+    if live_positions:
+        lines.append("*Live Positions*")
         lines.append(
             _code_line(
                 [
                     ("CODE", 6),
+                    ("STATE", 12),
                     ("QTY", 5),
-                    ("LIVE", 5),
-                    ("TARGET", 6),
+                    ("PX", 9),
                     ("SCORE", 5),
                     ("RULE", 4),
                 ]
             )
         )
-        for row in items:
-            if current_rows >= max_rows:
-                break
-            current_rows += 1
+        for idx, row in enumerate(live_positions[:max_rows], start=1):
             lines.append(
-                f"{current_rows}. "
+                f"{idx}. "
                 + _code_line(
                     [
                         (str(row.get("symbol") or "-").upper(), 6),
-                        (_fmt_int(row.get("order_qty")), 5),
+                        (_build_signal_state(row), 12),
                         (_fmt_int(row.get("live_qty")), 5),
-                        (_fmt_int(row.get("target_qty")), 6),
+                        (_fmt_currency(row.get("live_price")), 9),
                         (row.get("paper_final_score", "-"), 5),
                         (row.get("paper_rule_score", "-"), 4),
                     ]
                 )
             )
-            lines.append(f"   reason: {_build_reconcile_reason_detail(row)}")
+            status_text = _build_status_detail(row)
+            if status_text:
+                lines.append(f"   status: {status_text}")
             advice_text = _build_position_advice_detail(row)
             if advice_text:
                 lines.append(f"   advice: {advice_text}")
         lines.append("")
-        return current_rows
 
-    shown = 0
-    shown = _append_order_section("Buy To Add", buys, shown)
-    shown = _append_order_section("Sell To Reduce", sells, shown)
-    if len(orders) > shown:
-        lines.append(f"- ... {len(orders) - shown} more orders omitted")
+    if watch_entries:
+        lines.append("*Entry Watchlist*")
+        lines.append(
+            _code_line(
+                [
+                    ("CODE", 6),
+                    ("STATE", 12),
+                    ("PX", 9),
+                    ("SCORE", 5),
+                    ("RULE", 4),
+                ]
+            )
+        )
+        for idx, row in enumerate(watch_entries[:max_rows], start=1):
+            lines.append(
+                f"{idx}. "
+                + _code_line(
+                    [
+                        (str(row.get("symbol") or "-").upper(), 6),
+                        (_build_signal_state(row), 12),
+                        (_fmt_currency(row.get("live_price")), 9),
+                        (row.get("paper_final_score", "-"), 5),
+                        (row.get("paper_rule_score", "-"), 4),
+                    ]
+                )
+            )
+            status_text = _build_status_detail(row)
+            if status_text:
+                lines.append(f"   status: {status_text}")
+            advice_text = _build_position_advice_detail(row)
+            if advice_text:
+                lines.append(f"   advice: {advice_text}")
+        lines.append("")
+
     return "\n".join(lines).rstrip()

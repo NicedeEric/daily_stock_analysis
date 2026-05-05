@@ -219,6 +219,70 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         )
         self.assertIn("advice: reduce position and lock gains", message)
 
+    def test_build_reconcile_message_includes_live_position_status_and_levels(self):
+        message = build_reconcile_message(
+            {
+                "live_as_of": "2026-05-05",
+                "paper_run_date": "2026-05-05",
+                "strategy": {"name": "signal_portfolio", "version": "v1_us"},
+                "delta_orders": [],
+                "signal_rows": [
+                    {
+                        "symbol": "CRWD",
+                        "live_qty": 4,
+                        "target_qty": 4,
+                        "live_price": 455.64,
+                        "live_price_source": "last_price",
+                        "live_avg_cost": 456.19,
+                        "paper_final_score": 72,
+                        "paper_rule_score": 66,
+                        "paper_final_decision": "hold",
+                        "paper_stop_loss": 430.0,
+                        "paper_take_profit": 490.0,
+                        "paper_position_advice": {
+                            "has_position": "hold above the stop and scale out near target",
+                        },
+                    }
+                ],
+                "summary": {"order_count": 0, "buy_count": 0, "sell_count": 0},
+            }
+        )
+        self.assertIn("*Live Positions*", message)
+        self.assertIn("status: current $455.64 | avg $456.19 | stop $430.00 | take $490.00", message)
+        self.assertIn("advice: hold above the stop and scale out near target", message)
+
+    def test_build_reconcile_message_includes_entry_watchlist_and_price_fallback(self):
+        message = build_reconcile_message(
+            {
+                "live_as_of": "2026-05-05",
+                "paper_run_date": "2026-05-05",
+                "strategy": {"name": "signal_portfolio", "version": "v1_us"},
+                "delta_orders": [],
+                "signal_rows": [
+                    {
+                        "symbol": "GEV",
+                        "live_qty": 0,
+                        "target_qty": 1,
+                        "live_price": 1072.09,
+                        "live_price_source": "paper_analysis_close",
+                        "paper_final_score": 73,
+                        "paper_rule_score": 71,
+                        "paper_final_decision": "buy",
+                        "paper_ideal_buy": 1072.09,
+                        "paper_secondary_buy": 1065.24,
+                        "paper_signal_date": "2026-05-02",
+                        "paper_position_advice": {
+                            "no_position": "wait for entry near the buy zone",
+                        },
+                    }
+                ],
+                "summary": {"order_count": 0, "buy_count": 0, "sell_count": 0},
+            }
+        )
+        self.assertIn("*Entry Watchlist*", message)
+        self.assertIn("status: current* $1,072.09 | entry $1,072.09 / $1,065.24 | signal 2026-05-02 | price fallback paper close", message)
+        self.assertIn("advice: wait for entry near the buy zone", message)
+
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
         service = PaperTradingService.__new__(PaperTradingService)
         price = service._resolve_entry_price(

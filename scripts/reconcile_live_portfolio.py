@@ -46,6 +46,43 @@ def _normalize_live_prices(items: List[Dict[str, Any]]) -> Dict[str, float]:
     return out
 
 
+def _normalize_live_meta(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for item in items or []:
+        symbol = str(item.get("symbol") or item.get("code") or "").strip().upper()
+        if not symbol:
+            continue
+        meta = out.setdefault(symbol, {})
+
+        price_raw = item.get("last_price")
+        price_source = "last_price"
+        if price_raw is None:
+            price_raw = item.get("price")
+            price_source = "price"
+        if price_raw is not None:
+            try:
+                price = float(price_raw)
+            except (TypeError, ValueError):
+                price = None
+            if price is not None and price > 0:
+                meta["live_price"] = price
+                meta["live_price_source"] = price_source
+
+        avg_raw = item.get("avg_cost")
+        if avg_raw is None:
+            avg_raw = item.get("average_cost")
+        if avg_raw is None:
+            avg_raw = item.get("cost_basis_per_share")
+        if avg_raw is not None:
+            try:
+                avg_cost = float(avg_raw)
+            except (TypeError, ValueError):
+                avg_cost = None
+            if avg_cost is not None and avg_cost > 0:
+                meta["live_avg_cost"] = avg_cost
+    return out
+
+
 def _normalize_decisions(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for item in items or []:
@@ -194,6 +231,53 @@ def _build_delta_orders(
     return orders
 
 
+def _build_signal_rows(
+    *,
+    live_positions: Dict[str, float],
+    live_meta: Dict[str, Dict[str, Any]],
+    target_positions: Dict[str, float],
+    decision_map: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    symbols = sorted(set(live_positions) | set(target_positions) | set(decision_map))
+    for symbol in symbols:
+        decision = decision_map.get(symbol) or {}
+        live_qty = float(live_positions.get(symbol, 0.0))
+        target_qty = float(target_positions.get(symbol, 0.0))
+        meta = live_meta.get(symbol) or {}
+        live_price = meta.get("live_price")
+        live_price_source = meta.get("live_price_source")
+        if live_price is None:
+            live_price = _to_float(decision.get("analysis_close"))
+            if live_price is not None:
+                live_price_source = "paper_analysis_close"
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "live_qty": live_qty,
+                "target_qty": target_qty,
+                "live_price": live_price,
+                "live_price_source": live_price_source,
+                "live_avg_cost": meta.get("live_avg_cost"),
+                "paper_action": decision.get("action"),
+                "paper_status": decision.get("status"),
+                "paper_final_decision": decision.get("final_decision"),
+                "paper_final_score": decision.get("final_score"),
+                "paper_rule_score": decision.get("rule_score"),
+                "paper_reasons": decision.get("reasons") or [],
+                "paper_analysis_close": decision.get("analysis_close"),
+                "paper_ideal_buy": decision.get("ideal_buy"),
+                "paper_secondary_buy": decision.get("secondary_buy"),
+                "paper_signal_date": decision.get("signal_date"),
+                "paper_stop_loss": _to_float(decision.get("stop_loss")),
+                "paper_take_profit": _to_float(decision.get("take_profit")),
+                "paper_position_advice": decision.get("position_advice") or {},
+            }
+        )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reconcile live portfolio with paper target.")
     parser.add_argument("--live-json", required=True, help="Path to live portfolio snapshot JSON.")
@@ -221,6 +305,7 @@ def main() -> int:
     live_items = live.get("positions") or []
     live_positions = _normalize_positions(live_items)
     live_prices = _normalize_live_prices(live_items)
+    live_meta = _normalize_live_meta(live_items)
     target_positions = _normalize_positions(
         (((paper.get("result") or {}).get("account_snapshot") or {}).get("positions") or [])
     )
@@ -233,6 +318,12 @@ def main() -> int:
         decision_map=decision_map,
         min_delta_shares=max(0.0, float(args.min_delta_shares)),
     )
+    signal_rows = _build_signal_rows(
+        live_positions=live_positions,
+        live_meta=live_meta,
+        target_positions=target_positions,
+        decision_map=decision_map,
+    )
 
     payload = {
         "live_as_of": live.get("as_of"),
@@ -244,6 +335,7 @@ def main() -> int:
         "live_positions": live_positions,
         "target_positions": target_positions,
         "delta_orders": orders,
+        "signal_rows": signal_rows,
         "summary": {
             "order_count": len(orders),
             "buy_count": sum(1 for o in orders if o["side"] == "buy"),
