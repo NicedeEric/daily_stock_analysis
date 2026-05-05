@@ -98,6 +98,8 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
                 "final_decision": snapshot.get("final_decision"),
                 "ideal_buy": snapshot.get("ideal_buy"),
                 "secondary_buy": snapshot.get("secondary_buy"),
+                "stop_loss": snapshot.get("stop_loss"),
+                "take_profit": snapshot.get("take_profit"),
                 "analysis_close": snapshot.get("analysis_close"),
                 "signal_date": snapshot.get("signal_date"),
                 "qty": getattr(row, "execution_quantity", None),

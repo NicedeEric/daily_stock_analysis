@@ -5,8 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
+from sqlalchemy import desc, or_, select
+
+from src.storage import AnalysisHistory, DatabaseManager
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -79,6 +84,133 @@ def _to_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return numeric
+
+
+def _parse_iso_date(value: Any) -> Optional[date]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _extract_position_advice(raw_result: Any) -> Dict[str, str]:
+    if isinstance(raw_result, dict):
+        payload = raw_result
+    elif raw_result:
+        try:
+            payload = json.loads(raw_result)
+        except Exception:
+            payload = {}
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        return {}
+    dashboard = payload.get("dashboard")
+    core = dashboard.get("core_conclusion") if isinstance(dashboard, dict) else None
+    pos = core.get("position_advice") if isinstance(core, dict) else None
+    if not isinstance(pos, dict):
+        return {}
+    out: Dict[str, str] = {}
+    no_position = str(pos.get("no_position") or "").strip()
+    has_position = str(pos.get("has_position") or "").strip()
+    if no_position:
+        out["no_position"] = no_position
+    if has_position:
+        out["has_position"] = has_position
+    return out
+
+
+def _history_to_signal(row: AnalysisHistory) -> Dict[str, Any]:
+    return {
+        "code": str(getattr(row, "code", "") or "").upper(),
+        "final_score": getattr(row, "final_score", None),
+        "rule_score": getattr(row, "rule_score", None),
+        "final_decision": getattr(row, "final_decision", None),
+        "ideal_buy": getattr(row, "ideal_buy", None),
+        "secondary_buy": getattr(row, "secondary_buy", None),
+        "stop_loss": getattr(row, "stop_loss", None),
+        "take_profit": getattr(row, "take_profit", None),
+        "analysis_close": getattr(row, "analysis_close", None),
+        "signal_date": getattr(row, "analysis_date", None).isoformat() if getattr(row, "analysis_date", None) else None,
+        "position_advice": _extract_position_advice(getattr(row, "raw_result", None)),
+    }
+
+
+def _needs_history_fill(item: Dict[str, Any]) -> bool:
+    return any(
+        item.get(key) in (None, "", [])
+        for key in (
+            "final_score",
+            "rule_score",
+            "stop_loss",
+            "take_profit",
+            "ideal_buy",
+            "secondary_buy",
+            "signal_date",
+        )
+    )
+
+
+def _merge_signal(base: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in fallback.items():
+        if merged.get(key) in (None, "", []):
+            merged[key] = value
+    existing_advice = merged.get("position_advice")
+    if not isinstance(existing_advice, dict) or not existing_advice:
+        merged["position_advice"] = fallback.get("position_advice") or {}
+    return merged
+
+
+def _load_history_map(symbols: Iterable[str], paper_run_date: Optional[date]) -> Dict[str, Dict[str, Any]]:
+    requested = sorted({str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()})
+    if not requested:
+        return {}
+
+    db = DatabaseManager.get_instance()
+    history_map: Dict[str, Dict[str, Any]] = {}
+    with db.get_session() as session:
+        for symbol in requested:
+            conditions = [AnalysisHistory.code == symbol]
+            if paper_run_date is not None:
+                conditions.append(
+                    or_(
+                        AnalysisHistory.analysis_date.is_(None),
+                        AnalysisHistory.analysis_date <= paper_run_date,
+                    )
+                )
+            row = session.execute(
+                select(AnalysisHistory)
+                .where(*conditions)
+                .order_by(
+                    desc(AnalysisHistory.analysis_date),
+                    desc(AnalysisHistory.created_at),
+                )
+                .limit(1)
+            ).scalars().first()
+            if row is not None:
+                history_map[symbol] = _history_to_signal(row)
+    return history_map
+
+
+def _enrich_decision_map(
+    decision_map: Dict[str, Dict[str, Any]],
+    *,
+    symbols: Iterable[str],
+    paper_run_date: Optional[date],
+) -> Dict[str, Dict[str, Any]]:
+    out = {str(symbol).upper(): dict(item) for symbol, item in (decision_map or {}).items()}
+    history_map = _load_history_map(symbols, paper_run_date)
+    for symbol in {str(symbol or "").strip().upper() for symbol in symbols if str(symbol or "").strip()}:
+        current = out.get(symbol) or {"code": symbol}
+        if symbol not in out or _needs_history_fill(current):
+            fallback = history_map.get(symbol)
+            if fallback:
+                out[symbol] = _merge_signal(current, fallback)
+    return out
 
 
 def _build_delta_orders(
@@ -294,6 +426,7 @@ def main() -> int:
 
     live = _load_json(Path(args.live_json))
     paper = _load_json(Path(args.paper_json))
+    paper_run_date = _parse_iso_date((paper.get("result") or {}).get("run_date"))
 
     live_items = live.get("positions") or []
     live_positions = _normalize_positions(live_items)
@@ -301,7 +434,11 @@ def main() -> int:
     target_positions = _normalize_positions(
         (((paper.get("result") or {}).get("account_snapshot") or {}).get("positions") or [])
     )
-    decision_map = _normalize_decisions(paper.get("decisions") or [])
+    decision_map = _enrich_decision_map(
+        _normalize_decisions(paper.get("decisions") or []),
+        symbols=set(live_positions) | set(target_positions),
+        paper_run_date=paper_run_date,
+    )
 
     orders = _build_delta_orders(
         live_positions=live_positions,
