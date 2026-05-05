@@ -6,16 +6,28 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from urllib.error import HTTPError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.paper_trade_notifications import build_reconcile_message
+
+
+def _to_plain_telegram_text(markdown_like_text: str) -> str:
+    text = str(markdown_like_text or "")
+    lines = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"^\*(.+)\*$", r"\1", raw_line.strip())
+        line = line.replace("`", "")
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -45,13 +57,13 @@ def main() -> int:
 
     payload = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
     text = build_reconcile_message(payload, max_rows=max(1, int(args.max_rows)))
+    text = _to_plain_telegram_text(text)
     if len(text) > 3500:
         text = text[:3450] + "\n... truncated"
 
     data = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
     if thread_id:
@@ -63,10 +75,16 @@ def main() -> int:
         data=urllib.parse.urlencode(data).encode("utf-8"),
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        body = resp.read().decode("utf-8", errors="ignore")
-        print("telegram_status=ok")
-        print(body[:300])
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", errors="ignore")
+            print("telegram_status=ok")
+            print(body[:300])
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore")
+        print(f"telegram_status=http_error_{exc.code}")
+        print(body[:500])
+        raise
     return 0
 
 

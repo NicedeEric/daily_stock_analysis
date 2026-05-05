@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] `send_reconcile_telegram.py` 改为向 Telegram 发送纯文本消息并输出完整 HTTP 错误体，避免 `Markdown` 解析被动态建议文案、`PX*` 标记等内容触发 400 Bad Request。
 - [修复] `paper_reconcile` workflow 现在会把 `DATABASE_URL` 和连接池配置传给 `Reconcile live vs paper target` 步骤，避免该步骤退回到 GitHub runner 的空 SQLite，导致买卖行缺少从 `analysis_history` 回填的分数与风控价位。
 - [修复] `scripts/reconcile_live_portfolio.py` 现在会自动注入仓库根目录到 `sys.path`，修复 GitHub Actions 直接运行脚本时 `ModuleNotFoundError: No module named 'src'` 的问题。
 - [修复] `paper_reconcile` 现在会补齐 `paper decisions` 中的止损/止盈字段，并按股票代码从 `analysis_history` 回填缺失的分数、买点与风控价位，避免持仓调仓行出现空白列。
