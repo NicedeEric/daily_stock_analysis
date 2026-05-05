@@ -178,27 +178,27 @@ def _build_status_detail(row: Dict[str, Any]) -> str:
     signal_date = row.get("paper_signal_date")
 
     if live_price is not None:
-        price_label = "current"
+        price_label = "PX"
         if live_price_source == "paper_analysis_close":
-            price_label = "current*"
+            price_label = "PX*"
         parts.append(f"{price_label} {_fmt_currency(live_price)}")
     if live_avg_cost is not None:
-        parts.append(f"avg {_fmt_currency(live_avg_cost)}")
+        parts.append(f"AVG {_fmt_currency(live_avg_cost)}")
     if stop_loss is not None:
-        parts.append(f"stop {_fmt_currency(stop_loss)}")
+        parts.append(f"SL {_fmt_currency(stop_loss)}")
     if take_profit is not None:
-        parts.append(f"take {_fmt_currency(take_profit)}")
+        parts.append(f"TP {_fmt_currency(take_profit)}")
     if ideal_buy is not None:
-        entry_text = f"entry {_fmt_currency(ideal_buy)}"
+        entry_text = f"EN {_fmt_currency(ideal_buy)}"
         if secondary_buy is not None:
             entry_text = f"{entry_text} / {_fmt_currency(secondary_buy)}"
         parts.append(entry_text)
     if signal_date:
-        parts.append(f"signal {signal_date}")
+        parts.append(f"SIG {signal_date}")
     if not parts:
         return ""
     if live_price_source == "paper_analysis_close":
-        parts.append("price fallback paper close")
+        parts.append("paper-close fallback")
     return " | ".join(parts)
 
 
@@ -213,6 +213,52 @@ def _build_signal_state(row: Dict[str, Any]) -> str:
     if final_decision == "sell":
         return "avoid / exit"
     return "observe"
+
+
+def _append_reconcile_context_section(
+    lines: List[str],
+    title: str,
+    rows: List[Dict[str, Any]],
+    *,
+    max_rows: int,
+) -> None:
+    if not rows:
+        return
+    lines.append(f"*{title}*")
+    lines.append(
+        _code_line(
+            [
+                ("ACT", 4),
+                ("CODE", 6),
+                ("STATE", 12),
+                ("PX", 9),
+                ("SCORE", 5),
+                ("RULE", 4),
+            ]
+        )
+    )
+    for idx, row in enumerate(rows[:max_rows], start=1):
+        action = str(row.get("side") or row.get("paper_final_decision") or row.get("paper_action") or "-").upper()
+        lines.append(
+            f"{idx}. "
+            + _code_line(
+                [
+                    (action, 4),
+                    (str(row.get("symbol") or "-").upper(), 6),
+                    (_build_signal_state(row), 12),
+                    (_fmt_currency(row.get("live_price")), 9),
+                    (row.get("paper_final_score", "-"), 5),
+                    (row.get("paper_rule_score", "-"), 4),
+                ]
+            )
+        )
+        status_text = _build_status_detail(row)
+        if status_text:
+            lines.append(f"   status: {status_text}")
+        advice_text = _build_position_advice_detail(row)
+        if advice_text:
+            lines.append(f"   advice: {advice_text}")
+    lines.append("")
 
 
 def build_paper_trading_message(
@@ -445,6 +491,7 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
         shown = _append_order_section("Sell To Reduce", sells, shown)
         if len(orders) > shown:
             lines.append(f"- ... {len(orders) - shown} more orders omitted")
+        _append_reconcile_context_section(lines, "Action Context", orders, max_rows=max_rows)
 
     live_positions = [row for row in signal_rows if _as_float(row.get("live_qty"), 0.0) > 0]
     watch_entries = [

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] `paper_reconcile` 的 Telegram 输出新增统一的 `Action Context` 区块，并为买卖两侧订单对齐展示当前价、均价、止损、止盈、入场位与持仓建议。
 - [改进] 同一股票同一分析日重复运行时，`analysis_history` 改为覆盖更新已有记录，避免 Supabase 中产生重复日度分析。
 - [改进] 将统一 LLM 默认温度下调到 `0.1`，并让市场复盘复用全局低温配置以降低金融场景下的幻觉波动。
 - [修复] 修复 `daily_analysis_2/_3` 与配置加载在 `GEMINI_MODEL` 为空时生成 `gemini/` 无效模型名的问题，并为 Gemini 模型默认值增加兜底。

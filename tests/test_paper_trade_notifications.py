@@ -135,6 +135,14 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                         "paper_status": "executed",
                         "paper_final_decision": "buy",
                         "paper_reasons": ["executed"],
+                        "live_price": 188.52,
+                        "live_price_source": "paper_analysis_close",
+                        "paper_ideal_buy": 186.0,
+                        "paper_secondary_buy": 182.5,
+                        "paper_signal_date": "2026-05-01",
+                        "paper_position_advice": {
+                            "no_position": "enter on controlled pullbacks near the buy zone",
+                        },
                     },
                     {
                         "symbol": "TSLA",
@@ -148,6 +156,14 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                         "paper_status": "executed",
                         "paper_final_decision": "sell",
                         "paper_reasons": ["executed"],
+                        "live_price": 171.25,
+                        "live_price_source": "last_price",
+                        "live_avg_cost": 193.4,
+                        "paper_stop_loss": 175.0,
+                        "paper_take_profit": 215.0,
+                        "paper_position_advice": {
+                            "has_position": "cut the position if price keeps trading below the stop",
+                        },
                     },
                 ],
                 "summary": {"order_count": 2, "buy_count": 1, "sell_count": 1},
@@ -157,9 +173,14 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Paper Reconcile Update*", message)
         self.assertIn("*Buy To Add*", message)
         self.assertIn("*Sell To Reduce*", message)
+        self.assertIn("*Action Context*", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
         self.assertIn("reason: executed", message)
+        self.assertIn("status: PX* $188.52 | EN $186.00 / $182.50 | SIG 2026-05-01 | paper-close fallback", message)
+        self.assertIn("status: PX $171.25 | AVG $193.40 | SL $175.00 | TP $215.00", message)
+        self.assertIn("advice: enter on controlled pullbacks near the buy zone", message)
+        self.assertIn("advice: cut the position if price keeps trading below the stop", message)
 
     def test_build_reconcile_message_distinguishes_target_mismatch_from_sell_signal(self):
         message = build_reconcile_message(
@@ -248,7 +269,7 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
             }
         )
         self.assertIn("*Live Positions*", message)
-        self.assertIn("status: current $455.64 | avg $456.19 | stop $430.00 | take $490.00", message)
+        self.assertIn("status: PX $455.64 | AVG $456.19 | SL $430.00 | TP $490.00", message)
         self.assertIn("advice: hold above the stop and scale out near target", message)
 
     def test_build_reconcile_message_includes_entry_watchlist_and_price_fallback(self):
@@ -280,7 +301,7 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
             }
         )
         self.assertIn("*Entry Watchlist*", message)
-        self.assertIn("status: current* $1,072.09 | entry $1,072.09 / $1,065.24 | signal 2026-05-02 | price fallback paper close", message)
+        self.assertIn("status: PX* $1,072.09 | EN $1,072.09 / $1,065.24 | SIG 2026-05-02 | paper-close fallback", message)
         self.assertIn("advice: wait for entry near the buy zone", message)
 
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
