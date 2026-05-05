@@ -180,7 +180,7 @@ def _build_status_detail(row: Dict[str, Any]) -> str:
     if live_price is not None:
         price_label = "PX"
         if live_price_source == "paper_analysis_close":
-            price_label = "PX*"
+            price_label = "PXfb"
         parts.append(f"{price_label} {_fmt_currency(live_price)}")
     if live_avg_cost is not None:
         parts.append(f"AVG {_fmt_currency(live_avg_cost)}")
@@ -422,7 +422,6 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
     summary = payload.get("summary") or {}
     strategy = payload.get("strategy") or {}
     orders = list(payload.get("delta_orders") or [])
-    signal_rows = list(payload.get("signal_rows") or [])
     buys = [row for row in orders if str(row.get("side") or "").lower() == "buy"]
     sells = [row for row in orders if str(row.get("side") or "").lower() == "sell"]
 
@@ -495,86 +494,5 @@ def build_reconcile_message(payload: Dict[str, Any], max_rows: int = 20) -> str:
         shown = _append_order_section("Sell To Reduce", sells, shown)
         if len(orders) > shown:
             lines.append(f"- ... {len(orders) - shown} more orders omitted")
-        _append_reconcile_context_section(lines, "Action Context", orders, max_rows=max_rows)
-
-    live_positions = [row for row in signal_rows if _as_float(row.get("live_qty"), 0.0) > 0]
-    watch_entries = [
-        row for row in signal_rows
-        if _as_float(row.get("live_qty"), 0.0) <= 0
-        and (
-            _as_float(row.get("target_qty"), 0.0) > 0
-            or str(row.get("paper_final_decision") or "").strip().lower() == "buy"
-        )
-    ]
-
-    if live_positions:
-        lines.append("*Live Positions*")
-        lines.append(
-            _code_line(
-                [
-                    ("CODE", 6),
-                    ("STATE", 12),
-                    ("QTY", 5),
-                    ("PX", 9),
-                    ("SCORE", 5),
-                    ("RULE", 4),
-                ]
-            )
-        )
-        for idx, row in enumerate(live_positions[:max_rows], start=1):
-            lines.append(
-                f"{idx}. "
-                + _code_line(
-                    [
-                        (str(row.get("symbol") or "-").upper(), 6),
-                        (_build_signal_state(row), 12),
-                        (_fmt_int(row.get("live_qty")), 5),
-                        (_fmt_currency(row.get("live_price")), 9),
-                        (row.get("paper_final_score", "-"), 5),
-                        (row.get("paper_rule_score", "-"), 4),
-                    ]
-                )
-            )
-            status_text = _build_status_detail(row)
-            if status_text:
-                lines.append(f"   status: {status_text}")
-            advice_text = _build_position_advice_detail(row)
-            if advice_text:
-                lines.append(f"   advice: {advice_text}")
-        lines.append("")
-
-    if watch_entries:
-        lines.append("*Entry Watchlist*")
-        lines.append(
-            _code_line(
-                [
-                    ("CODE", 6),
-                    ("STATE", 12),
-                    ("PX", 9),
-                    ("SCORE", 5),
-                    ("RULE", 4),
-                ]
-            )
-        )
-        for idx, row in enumerate(watch_entries[:max_rows], start=1):
-            lines.append(
-                f"{idx}. "
-                + _code_line(
-                    [
-                        (str(row.get("symbol") or "-").upper(), 6),
-                        (_build_signal_state(row), 12),
-                        (_fmt_currency(row.get("live_price")), 9),
-                        (row.get("paper_final_score", "-"), 5),
-                        (row.get("paper_rule_score", "-"), 4),
-                    ]
-                )
-            )
-            status_text = _build_status_detail(row)
-            if status_text:
-                lines.append(f"   status: {status_text}")
-            advice_text = _build_position_advice_detail(row)
-            if advice_text:
-                lines.append(f"   advice: {advice_text}")
-        lines.append("")
 
     return "\n".join(lines).rstrip()

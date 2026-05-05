@@ -173,14 +173,16 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         self.assertIn("*Paper Reconcile Update*", message)
         self.assertIn("*Buy To Add*", message)
         self.assertIn("*Sell To Reduce*", message)
-        self.assertIn("*Action Context*", message)
+        self.assertNotIn("*Action Context*", message)
+        self.assertNotIn("*Live Positions*", message)
+        self.assertNotIn("*Entry Watchlist*", message)
         self.assertIn("`CODE   QTY   LIVE  TARGET SL", message)
         self.assertIn("1. `AAPL", message)
         self.assertIn("2. `TSLA", message)
         self.assertIn("$175.00", message)
         self.assertIn("$215.00", message)
         self.assertIn("reason: executed", message)
-        self.assertIn("status: PX* $188.52 | EN $186.00 / $182.50 | SIG 2026-05-01 | paper-close fallback", message)
+        self.assertIn("status: PXfb $188.52 | EN $186.00 / $182.50 | SIG 2026-05-01 | paper-close fallback", message)
         self.assertIn("status: PX $171.25 | AVG $193.40 | SL $175.00 | TP $215.00", message)
         self.assertIn("advice: enter on controlled pullbacks near the buy zone", message)
         self.assertIn("advice: cut the position if price keeps trading below the stop", message)
@@ -243,7 +245,7 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
         )
         self.assertIn("advice: reduce position and lock gains", message)
 
-    def test_build_reconcile_message_includes_live_position_status_and_levels(self):
+    def test_build_reconcile_message_omits_live_positions_when_no_orders(self):
         message = build_reconcile_message(
             {
                 "live_as_of": "2026-05-05",
@@ -271,11 +273,13 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                 "summary": {"order_count": 0, "buy_count": 0, "sell_count": 0},
             }
         )
-        self.assertIn("*Live Positions*", message)
-        self.assertIn("status: PX $455.64 | AVG $456.19 | SL $430.00 | TP $490.00", message)
-        self.assertIn("advice: hold above the stop and scale out near target", message)
+        self.assertIn("*Delta Orders*", message)
+        self.assertIn("Live portfolio already matches paper target.", message)
+        self.assertNotIn("*Live Positions*", message)
+        self.assertNotIn("status: PX $455.64 | AVG $456.19 | SL $430.00 | TP $490.00", message)
+        self.assertNotIn("advice: hold above the stop and scale out near target", message)
 
-    def test_build_reconcile_message_includes_entry_watchlist_and_price_fallback(self):
+    def test_build_reconcile_message_omits_entry_watchlist_when_no_orders(self):
         message = build_reconcile_message(
             {
                 "live_as_of": "2026-05-05",
@@ -303,9 +307,9 @@ class PaperTradeNotificationsTestCase(unittest.TestCase):
                 "summary": {"order_count": 0, "buy_count": 0, "sell_count": 0},
             }
         )
-        self.assertIn("*Entry Watchlist*", message)
-        self.assertIn("status: PX* $1,072.09 | EN $1,072.09 / $1,065.24 | SIG 2026-05-02 | paper-close fallback", message)
-        self.assertIn("advice: wait for entry near the buy zone", message)
+        self.assertNotIn("*Entry Watchlist*", message)
+        self.assertNotIn("status: PXfb $1,072.09 | EN $1,072.09 / $1,065.24 | SIG 2026-05-02 | paper-close fallback", message)
+        self.assertNotIn("advice: wait for entry near the buy zone", message)
 
     def test_analysis_close_execution_mode_uses_analysis_close_price(self):
         service = PaperTradingService.__new__(PaperTradingService)

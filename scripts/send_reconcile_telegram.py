@@ -30,6 +30,29 @@ def _to_plain_telegram_text(markdown_like_text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _truncate_by_lines(text: str, max_chars: int = 3500) -> str:
+    raw = str(text or "").strip()
+    if len(raw) <= max_chars:
+        return raw
+    lines = raw.splitlines()
+    kept: list[str] = []
+    omitted = 0
+    suffix = "\n... truncated"
+    current_len = 0
+    for idx, line in enumerate(lines):
+        line_len = len(line) + (1 if kept else 0)
+        remaining_lines = len(lines) - idx - 1
+        reserved_suffix = len(suffix) if remaining_lines > 0 else 0
+        if current_len + line_len + reserved_suffix > max_chars:
+            omitted = len(lines) - idx
+            break
+        kept.append(line)
+        current_len += line_len
+    if omitted > 0:
+        return "\n".join(kept) + suffix
+    return "\n".join(kept)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Send paper reconcile result to Telegram.")
     parser.add_argument(
@@ -56,14 +79,15 @@ def main() -> int:
         return 0
 
     payload = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
-    text = build_reconcile_message(payload, max_rows=max(1, int(args.max_rows)))
-    text = _to_plain_telegram_text(text)
-    if len(text) > 3500:
-        text = text[:3450] + "\n... truncated"
+    markdown_text = _truncate_by_lines(
+        build_reconcile_message(payload, max_rows=max(1, int(args.max_rows))),
+        max_chars=3500,
+    )
 
     data = {
         "chat_id": chat_id,
-        "text": text,
+        "text": markdown_text,
+        "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
     if thread_id:
@@ -84,6 +108,25 @@ def main() -> int:
         body = exc.read().decode("utf-8", errors="ignore")
         print(f"telegram_status=http_error_{exc.code}")
         print(body[:500])
+        if exc.code == 400:
+            fallback_text = _truncate_by_lines(_to_plain_telegram_text(markdown_text), max_chars=3500)
+            fallback_data = {
+                "chat_id": chat_id,
+                "text": fallback_text,
+                "disable_web_page_preview": True,
+            }
+            if thread_id:
+                fallback_data["message_thread_id"] = thread_id
+            fallback_req = urllib.request.Request(
+                url,
+                data=urllib.parse.urlencode(fallback_data).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urllib.request.urlopen(fallback_req, timeout=20) as resp:
+                retry_body = resp.read().decode("utf-8", errors="ignore")
+                print("telegram_status=ok_plain_fallback")
+                print(retry_body[:300])
+                return 0
         raise
     return 0
 
