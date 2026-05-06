@@ -7,6 +7,10 @@ on:
         description: "Strategy version"
         required: false
         default: "v1_us"
+      top_up_cash:
+        description: "Top up paper account cash in USD (for example 80000)"
+        required: false
+        default: "0"
       lookback_days:
         description: "Signal lookback days"
         required: false
@@ -66,6 +70,7 @@ jobs:
           PAPER_STRATEGY_NAME: signal_portfolio
           PAPER_STRATEGY_VERSION: ${{ github.event.inputs.strategy_version || 'v1_us' }}
           PAPER_INITIAL_CAPITAL: "20000"
+          PAPER_TOP_UP_CASH: ${{ github.event.inputs.top_up_cash || '0' }}
           PAPER_MARKET: us
           PAPER_BASE_CURRENCY: USD
           PAPER_MAX_POSITIONS: "10"

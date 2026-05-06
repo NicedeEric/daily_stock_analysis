@@ -27,6 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strategy-name", default=os.getenv("PAPER_STRATEGY_NAME", "signal_portfolio"))
     parser.add_argument("--strategy-version", default=os.getenv("PAPER_STRATEGY_VERSION", "v1_us"))
     parser.add_argument("--initial-capital", type=float, default=float(os.getenv("PAPER_INITIAL_CAPITAL", "20000")))
+    parser.add_argument("--top-up-cash", type=float, default=float(os.getenv("PAPER_TOP_UP_CASH", "0")))
     parser.add_argument("--market", default=os.getenv("PAPER_MARKET", "us"))
     parser.add_argument("--base-currency", default=os.getenv("PAPER_BASE_CURRENCY", "USD"))
     parser.add_argument("--run-date", default=os.getenv("PAPER_RUN_DATE", ""))
@@ -115,6 +116,7 @@ def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -
 def main() -> int:
     args = _build_parser().parse_args()
     service = PaperTradingService()
+    run_date = _parse_run_date(args.run_date)
     config_override = {
         "max_positions": args.max_positions,
         "max_position_pct": args.max_position_pct,
@@ -136,13 +138,23 @@ def main() -> int:
         market=args.market,
         config_override=config_override,
     )
+    top_up_result = None
+    if float(args.top_up_cash or 0.0) > 0:
+        top_up_result = service.top_up_strategy_cash(
+            strategy_name=args.strategy_name,
+            strategy_version=args.strategy_version,
+            amount=float(args.top_up_cash),
+            event_date=run_date,
+        )
     result = service.run_daily(
         strategy_name=args.strategy_name,
         strategy_version=args.strategy_version,
-        run_date=_parse_run_date(args.run_date),
+        run_date=run_date,
     )
     decisions = _fetch_decisions_for_run(strategy, result)
     payload = {"strategy": strategy, "result": result, "decisions": decisions}
+    if top_up_result:
+        payload["top_up"] = top_up_result
     output_path = Path(args.output_json)
     _dump_json(output_path, payload)
     print(f"paper_trading_strategy={strategy['strategy_name']}:{strategy['strategy_version']}")
@@ -150,6 +162,9 @@ def main() -> int:
     print(f"paper_trading_executed={result.get('executed')}")
     print(f"paper_trading_skipped={result.get('skipped')}")
     print(f"paper_trading_errors={result.get('errors')}")
+    if top_up_result:
+        print(f"paper_trading_top_up_cash={top_up_result['amount']}")
+        print(f"paper_trading_top_up_date={top_up_result['event_date']}")
     print(f"paper_trading_output={output_path.resolve()}")
     if _as_bool(args.notify):
         from src.notification import NotificationService

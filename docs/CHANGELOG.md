@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] `paper_trading` / `paper_reconcile` workflow 新增 `top_up_cash` 手动输入，支持给现有 paper 策略账户一次性追加入金；`run_paper_trading.py` 新增 `--top-up-cash` / `PAPER_TOP_UP_CASH` 入口并将入金记录写入现金流水。
 - [改进] `paper_reconcile` 的 Telegram 通知精简为 `Buy To Add` / `Sell To Reduce` 主区块，移除尾部 `Action Context`、`Live Positions`、`Entry Watchlist`，同时优先使用 Markdown 发送并在 400 时自动回退纯文本。
 - [修复] `send_reconcile_telegram.py` 改为向 Telegram 发送纯文本消息并输出完整 HTTP 错误体，避免 `Markdown` 解析被动态建议文案、`PX*` 标记等内容触发 400 Bad Request。
 - [修复] `paper_reconcile` workflow 现在会把 `DATABASE_URL` 和连接池配置传给 `Reconcile live vs paper target` 步骤，避免该步骤退回到 GitHub runner 的空 SQLite，导致买卖行缺少从 `analysis_history` 回填的分数与风控价位。

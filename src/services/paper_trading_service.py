@@ -169,6 +169,41 @@ class PaperTradingService:
 
             return self._strategy_to_dict(row)
 
+    def top_up_strategy_cash(
+        self,
+        *,
+        strategy_name: str,
+        strategy_version: str,
+        amount: float,
+        event_date: Optional[date] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError("top_up_cash must be positive")
+
+        strategy = self._load_strategy(strategy_name=strategy_name, strategy_version=strategy_version)
+        if strategy is None:
+            raise ValueError(f"strategy not found: {strategy_name}:{strategy_version}")
+
+        effective_date = event_date or date.today()
+        result = self.portfolio_service.record_cash_ledger(
+            account_id=int(strategy.account_id),
+            event_date=effective_date,
+            direction="in",
+            amount=amount,
+            currency=strategy.base_currency,
+            note=(note or "").strip() or f"paper_strategy_topup:{strategy_name}:{strategy_version}",
+        )
+        return {
+            "strategy_name": strategy_name,
+            "strategy_version": strategy_version,
+            "account_id": int(strategy.account_id),
+            "amount": amount,
+            "event_date": effective_date.isoformat(),
+            "ledger_id": int(result["id"]),
+        }
+
     def run_daily(
         self,
         *,
