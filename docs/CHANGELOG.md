@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 美股历史日线现在固定走 `YfinanceFetcher`，不再因配置 Longbridge 凭证而切换为长桥历史 K 线，避免 `stock_daily` / `paper_trading` / 持仓浮盈亏使用不同复权口径导致的收盘价失真。
 - [新功能] `paper_trading` / `paper_reconcile` workflow 新增 `top_up_cash` 手动输入，支持给现有 paper 策略账户一次性追加入金；`run_paper_trading.py` 新增 `--top-up-cash` / `PAPER_TOP_UP_CASH` 入口并将入金记录写入现金流水。
 - [改进] `paper_reconcile` 的 Telegram 通知精简为 `Buy To Add` / `Sell To Reduce` 主区块，移除尾部 `Action Context`、`Live Positions`、`Entry Watchlist`，同时优先使用 Markdown 发送并在 400 时自动回退纯文本。
 - [修复] `send_reconcile_telegram.py` 改为向 Telegram 发送纯文本消息并输出完整 HTTP 错误体，避免 `Markdown` 解析被动态建议文案、`PX*` 标记等内容触发 400 Bad Request。

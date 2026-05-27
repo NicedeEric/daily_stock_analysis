@@ -946,14 +946,13 @@ class DataFetcherManager:
         is_us = is_us_index or is_us_stock_code(stock_code)
         is_hk = (not is_us) and _is_hk_market(stock_code)
 
-        # 美股（含美股指数）使用 Longbridge/YFinance 特殊路由；港股走下方通用数据源循环
+        # 美股（含美股指数）历史日线统一使用 YFinance；港股走下方通用数据源循环
         if is_us:
-            prefer_lb = self._longbridge_preferred() and not is_us_index
-            source_order = (
-                ["LongbridgeFetcher", "YfinanceFetcher"]
-                if prefer_lb
-                else ["YfinanceFetcher", "LongbridgeFetcher"]
-            )
+            # Keep US historical close prices on the documented YFinance path.
+            # Longbridge still participates in realtime quote supplementation,
+            # but should not silently replace stock_daily / paper valuation
+            # history with a different adjustment basis.
+            source_order = ["YfinanceFetcher"]
             market_label = "美股指数" if is_us_index else "美股"
 
             for src_name in source_order:
