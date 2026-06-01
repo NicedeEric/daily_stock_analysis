@@ -9,7 +9,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from sqlalchemy import and_, select
 
+from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.paper_trade_notifications import build_paper_trading_message
 from src.services.paper_trading_service import PaperTradingService
 from src.storage import DatabaseManager, PaperStrategyDecision
@@ -41,6 +42,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slippage-bps", type=float, default=float(os.getenv("PAPER_SLIPPAGE_BPS", "5")))
     parser.add_argument("--lookback-days", type=int, default=int(os.getenv("PAPER_SIGNAL_LOOKBACK_DAYS", "3")))
     parser.add_argument("--execution-mode", default=os.getenv("PAPER_EXECUTION_MODE", "analysis_close"))
+    parser.add_argument(
+        "--stock-list",
+        default=os.getenv("PAPER_STOCK_LIST") or os.getenv("STOCK_LIST", ""),
+    )
     parser.add_argument("--notify", default=os.getenv("PAPER_NOTIFY", "false"))
     parser.add_argument("--output-json", default=os.getenv("PAPER_OUTPUT_JSON", "data/paper_trading_result.json"))
     return parser
@@ -60,6 +65,18 @@ def _dump_json(path: Path, payload: Dict[str, Any]) -> None:
 
 def _as_bool(value: str) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_stock_list(raw: str) -> Optional[Set[str]]:
+    parsed: Set[str] = set()
+    for item in str(raw or "").split(","):
+        token = str(item or "").strip()
+        if not token:
+            continue
+        normalized = canonical_stock_code(normalize_stock_code(token))
+        if normalized:
+            parsed.add(normalized)
+    return parsed or None
 
 
 def _fetch_decisions_for_run(strategy: Dict[str, Any], result: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -150,6 +167,7 @@ def main() -> int:
         strategy_name=args.strategy_name,
         strategy_version=args.strategy_version,
         run_date=run_date,
+        allowed_symbols=_parse_stock_list(args.stock_list),
     )
     decisions = _fetch_decisions_for_run(strategy, result)
     payload = {"strategy": strategy, "result": result, "decisions": decisions}

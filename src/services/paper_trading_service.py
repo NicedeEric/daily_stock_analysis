@@ -210,6 +210,7 @@ class PaperTradingService:
         strategy_name: str,
         strategy_version: str,
         run_date: Optional[date] = None,
+        allowed_symbols: Optional[set[str]] = None,
     ) -> Dict[str, Any]:
         run_date = run_date or date.today()
         strategy = self._load_strategy(strategy_name=strategy_name, strategy_version=strategy_version)
@@ -228,7 +229,12 @@ class PaperTradingService:
         total_equity = float(account_snapshot.get("total_equity") or 0.0)
         available_cash = float(account_snapshot.get("total_cash") or 0.0)
 
-        signals = self._load_latest_signals(run_date=run_date, market=config.market, lookback_days=config.lookback_days)
+        signals = self._load_latest_signals(
+            run_date=run_date,
+            market=config.market,
+            lookback_days=config.lookback_days,
+            allowed_symbols=allowed_symbols,
+        )
         sells, buys = self._plan_actions(
             signals=signals,
             positions=position_qty,
@@ -423,8 +429,20 @@ class PaperTradingService:
             "account_snapshot": (end_snapshot.get("accounts") or [{}])[0],
         }
 
-    def _load_latest_signals(self, *, run_date: date, market: str, lookback_days: int) -> List[Dict[str, Any]]:
+    def _load_latest_signals(
+        self,
+        *,
+        run_date: date,
+        market: str,
+        lookback_days: int,
+        allowed_symbols: Optional[set[str]] = None,
+    ) -> List[Dict[str, Any]]:
         cutoff = datetime.combine(run_date - timedelta(days=lookback_days), datetime.min.time())
+        normalized_symbols = {
+            str(symbol or "").strip().upper()
+            for symbol in (allowed_symbols or set())
+            if str(symbol or "").strip()
+        }
         with self.db.get_session() as session:
             rows = session.execute(
                 select(AnalysisHistory)
@@ -439,6 +457,8 @@ class PaperTradingService:
             if not code:
                 continue
             if market == "us" and not is_us_stock_code(code):
+                continue
+            if normalized_symbols and code not in normalized_symbols:
                 continue
             if code in latest_by_code:
                 continue

@@ -83,6 +83,7 @@ jobs:
           PAPER_SLIPPAGE_BPS: "5"
           PAPER_EXECUTION_MODE: analysis_close
           PAPER_SIGNAL_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '3' }}
+          PAPER_STOCK_LIST: ${{ vars.PAPER_STOCK_LIST || secrets.PAPER_STOCK_LIST || vars.STOCK_LIST || secrets.STOCK_LIST }}
           PAPER_NOTIFY: ${{ github.event.inputs.notify_paper || 'false' }}
           PAPER_RUN_DATE: ${{ github.event.inputs.run_date }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
